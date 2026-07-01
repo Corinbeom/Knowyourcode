@@ -116,7 +116,11 @@ export async function evaluateAnswer(input: {
     throw new Error("평가할 질문을 찾을 수 없습니다.");
   }
 
-  const relatedFiles = pickRelatedFiles(input.analysis.contextFiles, question.relatedFiles);
+  const relatedFiles = pickRelatedFiles(
+    input.analysis.contextFiles,
+    question.relatedFiles,
+    `${question.question}\n${input.answer}`
+  );
   const fallback = buildFallbackEvaluation(input.answer, question.relatedFiles);
 
   const prompt = `You are KnowYourCode, evaluating whether a user understands their own code.
@@ -369,10 +373,67 @@ function normalizeRelatedFiles(input: unknown, fallbackFiles: string[]): string[
   return files.length ? files.slice(0, 5) : fallbackFiles.slice(0, 3);
 }
 
-function pickRelatedFiles(files: FileSummary[], relatedPaths: string[]): FileSummary[] {
-  const exact = files.filter((file) => relatedPaths.includes(file.path));
-  if (exact.length) return exact.slice(0, 8);
-  return files.slice(0, 8);
+function pickRelatedFiles(files: FileSummary[], relatedPaths: string[], searchText: string): FileSummary[] {
+  const queryTerms = extractSearchTerms(searchText);
+  const scored = files
+    .map((file) => ({
+      file,
+      score: scoreRelatedFile(file, relatedPaths, queryTerms)
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.file);
+
+  return dedupeFiles([...scored, ...files]).slice(0, 8);
+}
+
+function scoreRelatedFile(file: FileSummary, relatedPaths: string[], queryTerms: string[]): number {
+  let score = 0;
+
+  if (relatedPaths.includes(file.path)) score += 80;
+  if (relatedPaths.some((path) => file.path.includes(path) || path.includes(file.path))) score += 40;
+
+  const haystack = `${file.path}\n${file.reason}\n${file.excerpt}`.toLowerCase();
+  for (const term of queryTerms) {
+    if (file.path.toLowerCase().includes(term)) score += 12;
+    if (haystack.includes(term)) score += 4;
+  }
+
+  return score;
+}
+
+function extractSearchTerms(input: string): string[] {
+  const terms = input
+    .toLowerCase()
+    .match(/[a-z0-9_./-]{3,}|[가-힣]{2,}/g);
+
+  if (!terms) return [];
+
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "this",
+    "that",
+    "어떤",
+    "설명",
+    "파일",
+    "프로젝트",
+    "흐름",
+    "코드"
+  ]);
+
+  return [...new Set(terms.filter((term) => !stopWords.has(term)))].slice(0, 24);
+}
+
+function dedupeFiles(files: FileSummary[]): FileSummary[] {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    if (seen.has(file.path)) return false;
+    seen.add(file.path);
+    return true;
+  });
 }
 
 function buildFallbackEvaluation(answer: string, relatedFiles: string[]): EvaluationResult {
