@@ -372,6 +372,9 @@ export async function evaluateAnswer(input: {
   const prompt = `You are KnowYourCode, evaluating whether a user understands their own code.
 Evaluate in Korean and return JSON only.
 Keep the response concise. Do not quote code. Do not include markdown.
+Evaluate based on concrete code evidence, not general plausibility.
+Separate these dimensions: file/symbol accuracy, request or data flow accuracy, change impact awareness, and interview readiness.
+If the user honestly says they do not know, give partial credit for honesty but identify exactly what code they should inspect next.
 
 Project summary:
 ${input.analysis.report.oneLineSummary}
@@ -388,14 +391,21 @@ ${relatedFiles.map(formatFileForPrompt).join("\n\n")}
 Return this exact JSON shape:
 {
   "score": 0,
+  "scoreReason": "string",
   "understood": ["string"],
   "missing": ["string"],
   "incorrect": ["string"],
   "relatedFiles": ["string"],
+  "reviewCode": ["string"],
   "betterAnswer": "string",
+  "interviewAnswerDirection": "string",
   "followUpQuestion": "string"
 }
-Score must be an integer from 0 to 100.`;
+Score must be an integer from 0 to 100.
+scoreReason must be one concise Korean sentence.
+reviewCode must list 1 to 4 concrete file paths or symbols to revisit.
+betterAnswer should be a better project-code explanation, not a generic study tip.
+interviewAnswerDirection should explain how to answer this in a developer interview.`;
 
   const providerResult = await callConfiguredProvider(
     prompt,
@@ -410,11 +420,14 @@ Score must be an integer from 0 to 100.`;
 
   return {
     score: clampScore(parsed.score),
+    scoreReason: parsed.scoreReason || fallback.scoreReason,
     understood: normalizeStringArray(parsed.understood, fallback.understood),
     missing: normalizeStringArray(parsed.missing, fallback.missing),
     incorrect: normalizeStringArray(parsed.incorrect, fallback.incorrect),
     relatedFiles: normalizeStringArray(parsed.relatedFiles, fallback.relatedFiles),
+    reviewCode: normalizeStringArray(parsed.reviewCode, fallback.reviewCode),
     betterAnswer: parsed.betterAnswer || fallback.betterAnswer,
+    interviewAnswerDirection: parsed.interviewAnswerDirection || fallback.interviewAnswerDirection,
     followUpQuestion: parsed.followUpQuestion || fallback.followUpQuestion
   };
 }
@@ -713,14 +726,28 @@ function buildReportResponseSchema(): Record<string, unknown> {
 function buildEvaluationResponseSchema(): Record<string, unknown> {
   return {
     type: "OBJECT",
-    required: ["score", "understood", "missing", "incorrect", "relatedFiles", "betterAnswer", "followUpQuestion"],
+    required: [
+      "score",
+      "scoreReason",
+      "understood",
+      "missing",
+      "incorrect",
+      "relatedFiles",
+      "reviewCode",
+      "betterAnswer",
+      "interviewAnswerDirection",
+      "followUpQuestion"
+    ],
     properties: {
       score: { type: "NUMBER" },
+      scoreReason: { type: "STRING" },
       understood: { type: "ARRAY", items: { type: "STRING" } },
       missing: { type: "ARRAY", items: { type: "STRING" } },
       incorrect: { type: "ARRAY", items: { type: "STRING" } },
       relatedFiles: { type: "ARRAY", items: { type: "STRING" } },
+      reviewCode: { type: "ARRAY", items: { type: "STRING" } },
       betterAnswer: { type: "STRING" },
+      interviewAnswerDirection: { type: "STRING" },
       followUpQuestion: { type: "STRING" }
     }
   };
@@ -825,6 +852,9 @@ function buildFallbackEvaluation(answer: string, relatedFiles: string[]): Evalua
 
   return {
     score: hasSpecifics ? 68 : 42,
+    scoreReason: hasSpecifics
+      ? "관련 파일을 언급했지만 코드 흐름과 영향 범위 설명은 더 구체화할 필요가 있습니다."
+      : "답변이 일반적이라 실제 코드 근거를 충분히 확인하기 어렵습니다.",
     understood: hasSpecifics
       ? ["코드 구조나 관련 파일을 언급하려는 방향은 좋습니다."]
       : ["질문에 대한 답변 의도는 확인됩니다."],
@@ -834,8 +864,11 @@ function buildFallbackEvaluation(answer: string, relatedFiles: string[]): Evalua
     ],
     incorrect: [],
     relatedFiles,
+    reviewCode: relatedFiles.slice(0, 4),
     betterAnswer:
       "관련 파일의 역할을 먼저 짚고, 요청 또는 데이터가 어떤 순서로 이동하는지 설명한 뒤, 수정 시 함께 확인해야 할 파일을 연결해서 답변하는 것이 좋습니다.",
+    interviewAnswerDirection:
+      "면접에서는 파일명을 먼저 제시한 뒤, 진입점, 처리 흐름, 수정 시 영향 범위를 순서대로 설명하면 답변 신뢰도가 높아집니다.",
     followUpQuestion: "방금 설명한 흐름에서 가장 먼저 실행되는 파일은 무엇이고, 그 근거는 코드의 어느 부분인가요?"
   };
 }

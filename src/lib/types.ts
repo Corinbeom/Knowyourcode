@@ -58,10 +58,13 @@ export type AiUsage = {
 
 export type EvaluationResult = {
   score: number;
+  scoreReason: string;
   understood: string[];
   missing: string[];
   incorrect: string[];
   relatedFiles: string[];
+  reviewCode: string[];
   betterAnswer: string;
+  interviewAnswerDirection: string;
   followUpQuestion: string;
 };

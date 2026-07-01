@@ -818,6 +818,15 @@ textarea:focus,
   color: var(--muted);
 }
 
+.evaluation__score small {
+  max-width: 132px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .wide {
   grid-column: 1 / -1;
 }

@@ -539,15 +539,21 @@ function EvaluationView({ evaluation }: { evaluation: EvaluationResult }) {
       <div className="evaluation__score">
         <span>{evaluation.score}</span>
         <p>점수</p>
+        <small>{evaluation.scoreReason}</small>
       </div>
       <div className="evaluation__content">
         <InfoBlock title="잘 이해한 부분" items={evaluation.understood} />
         <InfoBlock title="부족한 부분" items={evaluation.missing} />
         <InfoBlock title="잘못 설명한 부분" items={evaluation.incorrect.length ? evaluation.incorrect : ["명확한 오류는 감지되지 않았습니다."]} />
         <InfoBlock title="관련 파일" items={evaluation.relatedFiles} />
+        <InfoBlock title="다시 볼 코드" items={evaluation.reviewCode} />
         <article className="wide">
           <h3>더 좋은 답변 예시</h3>
           <p>{evaluation.betterAnswer}</p>
+        </article>
+        <article className="wide">
+          <h3>면접 답변 방향</h3>
+          <p>{evaluation.interviewAnswerDirection}</p>
         </article>
         <article className="wide">
           <h3>후속 질문</h3>
