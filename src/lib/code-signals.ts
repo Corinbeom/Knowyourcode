@@ -11,7 +11,7 @@ const MAX_SIGNALS = 40;
 export function extractCodeSignals(files: FileSummary[]): CodeSignal[] {
   const signals: CodeSignal[] = [];
 
-  for (const file of files) {
+  for (const file of [...files].sort((a, b) => Number(isTestPath(a.path)) - Number(isTestPath(b.path)))) {
     const pathSignals = inferPathSignals(file);
     const symbolSignals = inferSymbolSignals(file);
     signals.push(...pathSignals, ...symbolSignals);
@@ -76,10 +76,28 @@ function inferSymbolSignals(file: FileSummary): CodeSignal[] {
 
 function dedupeSignals(signals: CodeSignal[]): CodeSignal[] {
   const seen = new Set<string>();
-  return signals.filter((signal) => {
-    const key = `${signal.kind}:${signal.path}:${signal.name}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return signals
+    .sort((a, b) => signalPriority(b) - signalPriority(a))
+    .filter((signal) => {
+      const key = `${signal.kind}:${signal.path}:${signal.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function signalPriority(signal: CodeSignal): number {
+  let score = 0;
+  if (signal.kind === "route") score += 50;
+  if (signal.kind === "component") score += 40;
+  if (signal.kind === "function") score += 30;
+  if (signal.kind === "data") score += 25;
+  if (signal.kind === "config") score += 10;
+  if (signal.kind === "test") score -= 50;
+  if (isTestPath(signal.path)) score -= 80;
+  return score;
+}
+
+function isTestPath(path: string): boolean {
+  return /(^|\/)(__tests__|test|tests|spec)(\/|$)|\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(path);
 }

@@ -5,11 +5,11 @@ const PRIORITY_PATTERNS = [
   /README/i,
   /^package\.json$/,
   /^(src|app|pages|components|lib|server|routes|api)\//,
-  /(route|router|controller|service|model|schema|store|auth|config|test|spec)/i
+  /(route|router|controller|service|model|schema|store|auth|config)/i
 ];
 
 export function buildStaticContext(repo: RepoInfo, files: SourceFile[]) {
-  const selectedFiles = rankFiles(files).slice(0, 16);
+  const selectedFiles = selectContextFiles(files);
   const contextFiles = selectedFiles.map(toFileSummary);
   const tree = summarizeTree(files);
   const packageJson = files.find((file) => file.path === "package.json");
@@ -104,21 +104,34 @@ function rankFiles(files: SourceFile[]): SourceFile[] {
   return [...files].sort((a, b) => scoreFile(b.path) - scoreFile(a.path));
 }
 
+function selectContextFiles(files: SourceFile[]): SourceFile[] {
+  const runtimeFiles = rankFiles(files.filter((file) => !isTestFile(file.path))).slice(0, 10);
+  const supportFiles = rankFiles(files.filter((file) => isTestFile(file.path))).slice(0, 1);
+  return [...runtimeFiles, ...supportFiles].slice(0, 11);
+}
+
 function scoreFile(path: string): number {
   let score = 0;
   for (const pattern of PRIORITY_PATTERNS) {
     if (pattern.test(path)) score += 10;
   }
   if (path.split("/").length <= 2) score += 3;
-  if (path.includes(".test.") || path.includes(".spec.")) score += 2;
+  if (/app\/api\/|pages\/api\/|route\.(ts|tsx|js|jsx)$|router|controller/i.test(path)) score += 18;
+  if (/service|lib|auth|repository|model|schema|store|db|database/i.test(path)) score += 14;
+  if (/page\.(tsx|jsx|ts|js)$|component|components\//i.test(path)) score += 10;
+  if (isTestFile(path)) score -= 35;
   return score;
+}
+
+function isTestFile(path: string): boolean {
+  return /(^|\/)(__tests__|test|tests|spec)(\/|$)|\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(path);
 }
 
 function toFileSummary(file: SourceFile): FileSummary {
   return {
     path: file.path,
     reason: inferFileReason(file.path),
-    excerpt: file.content.slice(0, 1000)
+    excerpt: file.content.slice(0, 600)
   };
 }
 
