@@ -24,6 +24,7 @@ const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
 const DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant";
 const ANALYSIS_OUTPUT_TOKENS = Number(process.env.ANALYSIS_OUTPUT_TOKENS ?? 2200);
 const EVALUATION_OUTPUT_TOKENS = Number(process.env.EVALUATION_OUTPUT_TOKENS ?? 1200);
+const PROMPT_FILE_EXCERPT_CHARS = Number(process.env.PROMPT_FILE_EXCERPT_CHARS ?? 1600);
 
 type ProviderResult = {
   text: string | null;
@@ -630,7 +631,7 @@ function formatFileForPrompt(file: FileSummary): string {
 Reason: ${file.reason}
 Excerpt:
 \`\`\`
-${file.excerpt.slice(0, 700)}
+${file.excerpt.slice(0, PROMPT_FILE_EXCERPT_CHARS)}
 \`\`\``;
 }
 

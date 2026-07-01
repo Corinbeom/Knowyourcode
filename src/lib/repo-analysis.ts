@@ -7,6 +7,10 @@ const PRIORITY_PATTERNS = [
   /^(backend|frontend|src|app|pages|components|lib|server|routes|api)\//,
   /(route|router|controller|service|repository|entity|model|schema|store|auth|config)/i
 ];
+const MAX_EXCERPT_LENGTH = 1_600;
+const SECTION_EXCERPT_LENGTH = 360;
+const SYMBOL_CONTEXT_LENGTH = 420;
+const MAX_SYMBOL_SNIPPETS = 2;
 
 export function buildStaticContext(
   repo: RepoInfo,
@@ -244,8 +248,69 @@ function toFileSummary(file: SourceFile): FileSummary {
   return {
     path: file.path,
     reason: inferFileReason(file.path),
-    excerpt: file.content.slice(0, 600)
+    excerpt: buildSmartExcerpt(file.content)
   };
+}
+
+function buildSmartExcerpt(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (normalized.length <= MAX_EXCERPT_LENGTH) return normalized;
+
+  const sections = [
+    formatExcerptSection("head", normalized.slice(0, SECTION_EXCERPT_LENGTH)),
+    formatExcerptSection("middle", sliceAround(normalized, Math.floor(normalized.length / 2), SECTION_EXCERPT_LENGTH)),
+    formatExcerptSection("tail", normalized.slice(-SECTION_EXCERPT_LENGTH))
+  ];
+
+  const symbolSnippets = findSymbolSnippetPositions(normalized)
+    .filter((position) => position > SECTION_EXCERPT_LENGTH)
+    .slice(0, MAX_SYMBOL_SNIPPETS)
+    .map((position, index) => formatExcerptSection(`symbol ${index + 1}`, sliceAround(normalized, position, SYMBOL_CONTEXT_LENGTH)));
+
+  return dedupeExcerptSections([...sections, ...symbolSnippets]).join("\n\n").slice(0, MAX_EXCERPT_LENGTH);
+}
+
+function formatExcerptSection(label: string, text: string): string {
+  return `[${label}]\n${text.trim()}`;
+}
+
+function sliceAround(content: string, index: number, length: number): string {
+  const half = Math.floor(length / 2);
+  const start = Math.max(index - half, 0);
+  const end = Math.min(start + length, content.length);
+  return content.slice(start, end);
+}
+
+function findSymbolSnippetPositions(content: string): number[] {
+  const patterns = [
+    /@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b/g,
+    /\b(?:public|private|protected)\s+(?:static\s+)?[A-Za-z0-9_<>, ?.[\]]+\s+[A-Za-z0-9_]+\s*\(/g,
+    /\bexport\s+(?:async\s+)?function\s+[A-Za-z0-9_]+/g,
+    /\bexport\s+const\s+[A-Za-z0-9_]+/g,
+    /\bconst\s+[A-Za-z0-9_]+\s*=\s*(?:async\s*)?\(/g,
+    /\bfunction\s+[A-Za-z0-9_]+\s*\(/g,
+    /\bclass\s+[A-Za-z0-9_]+/g,
+    /\breturn\s*\(/g
+  ];
+
+  const positions: number[] = [];
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      if (typeof match.index === "number") positions.push(match.index);
+    }
+  }
+
+  return [...new Set(positions)].sort((a, b) => a - b);
+}
+
+function dedupeExcerptSections(sections: string[]): string[] {
+  const seen = new Set<string>();
+  return sections.filter((section) => {
+    const compact = section.replace(/\s+/g, " ").slice(0, 120);
+    if (seen.has(compact)) return false;
+    seen.add(compact);
+    return true;
+  });
 }
 
 function inferFileReason(path: string): string {
