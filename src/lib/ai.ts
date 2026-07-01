@@ -6,6 +6,7 @@ import type {
   FileSummary,
   ProjectReport,
   QuestionLevel,
+  QuestionType,
   RepoInfo,
   UnderstandingQuestion
 } from "./types";
@@ -15,6 +16,7 @@ type StaticContext = {
   repo: RepoInfo;
   focus: AnalysisFocus;
   questionLevel: QuestionLevel;
+  questionTypes: QuestionType[];
   questionTargets: string[];
   fileCount: number;
   contextFiles: FileSummary[];
@@ -40,38 +42,64 @@ function formatFocus(focus: AnalysisFocus): string {
   return "전체 균형";
 }
 
-function buildQuestionPlan(focus: AnalysisFocus): string {
-  if (focus === "frontend") {
-    return [
-      "- q1 구조 이해: page/component/layout 중 하나의 역할",
-      "- q2 요청 흐름: frontend route, API call, form submit, navigation 흐름",
-      "- q3 데이터 흐름: client state, props, server response, cache 중 하나",
-      "- q4 변경 영향도: UI 기능 변경 시 함께 봐야 할 파일",
-      "- q5 면접형: frontend 설계 의도 또는 사용자 경험 리스크"
-    ].join("\n");
-  }
+function buildQuestionPlan(focus: AnalysisFocus, questionTypes: QuestionType[]): string {
+  const descriptions: Record<QuestionType, string> = {
+    "구조 이해": focus === "frontend"
+      ? "page/component/layout의 역할과 연결 구조"
+      : focus === "backend"
+        ? "API/controller/service 계층의 역할과 책임"
+        : "주요 파일의 역할과 frontend/backend 구조",
+    "요청 흐름": focus === "frontend"
+      ? "frontend route, API call, form submit, navigation 흐름"
+      : focus === "backend"
+        ? "request가 controller/service/domain/persistence로 이동하는 흐름"
+        : "frontend와 backend를 잇는 요청 처리 흐름",
+    "데이터 흐름": focus === "frontend"
+      ? "client state, props, server response, cache 흐름"
+      : focus === "backend"
+        ? "repository/entity/model/schema/database 중심 데이터 흐름"
+        : "frontend/backend 사이 데이터 이동 또는 저장소 접근",
+    "변경 영향도": focus === "frontend"
+      ? "UI 기능 변경 시 함께 봐야 할 파일과 영향 범위"
+      : focus === "backend"
+        ? "business rule 변경 시 영향받는 계층과 파일"
+        : "한 기능 변경 시 다른 계층에 미치는 영향",
+    "면접형": focus === "frontend"
+      ? "frontend 설계 의도 또는 사용자 경험 리스크"
+      : focus === "backend"
+        ? "장애, 예외, 보안, 트랜잭션, 운영 리스크"
+        : "핵심 도메인, 설계 의도, 운영 리스크"
+  };
 
-  if (focus === "backend") {
-    return [
-      "- q1 구조 이해: API/controller/handler 또는 service 계층 역할",
-      "- q2 요청 흐름: request가 service/domain/persistence까지 이동하는 흐름",
-      "- q3 데이터 흐름: repository/entity/model/schema/database 중 하나",
-      "- q4 변경 영향도: business rule 변경 시 영향받는 계층",
-      "- q5 면접형: 장애, 예외, 보안, 트랜잭션, 운영 리스크 중 하나"
-    ].join("\n");
-  }
-
-  return [
-    "- q1 구조 이해: frontend page/component 또는 client entry 파일",
-    "- q2 요청 흐름: backend API/controller/service 또는 server entry 파일",
-    "- q3 데이터 흐름: frontend와 backend 사이 데이터 이동 또는 저장소 접근",
-    "- q4 변경 영향도: 한 기능 변경 시 frontend와 backend 중 다른 계층 영향",
-    "- q5 면접형: auth/security가 아닌 다른 핵심 도메인이나 운영 리스크"
-  ].join("\n");
+  return Array.from({ length: 5 }, (_, index) => {
+    const type = questionTypes[index % questionTypes.length] ?? "구조 이해";
+    return `- q${index + 1} ${type}: ${descriptions[type]}`;
+  }).join("\n");
 }
 
 function formatQuestionTargets(questionTargets: string[]): string {
   return questionTargets.length ? questionTargets.join(", ") : "전체 기능";
+}
+
+function formatQuestionTypes(questionTypes: QuestionType[]): string {
+  const allTypes: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"];
+  if (questionTypes.length === allTypes.length && allTypes.every((type) => questionTypes.includes(type))) {
+    return "전체";
+  }
+  return questionTypes.join(", ");
+}
+
+function buildQuestionJsonShape(questionTypes: QuestionType[]): string {
+  const items = Array.from({ length: 5 }, (_, index) => {
+    const type = questionTypes[index % questionTypes.length] ?? "구조 이해";
+    return `    {"id":"q${index + 1}","type":"${type}","question":"string","relatedFiles":["string"]}`;
+  }).join(",\n");
+
+  return `{
+  "questions": [
+${items}
+  ]
+}`;
 }
 
 function formatQuestionLevel(questionLevel: QuestionLevel): string {
@@ -188,6 +216,7 @@ Each question must be under 70 Korean characters.
 Each relatedFiles array must contain exactly 1 path.
 Do not use backticks. Do not quote code. Do not list examples.
 Each question must mention one concrete file path or symbol name from the code signals.
+Each question type must be one of the selected 질문 유형 values only.
 Prefer runtime source files over test files. Do not base questions primarily on __tests__, .test.*, or .spec.* files unless asking about testing.
 If 분석 관점 is 프론트엔드 중심, questions must focus on UI, page, component, route, client state, and frontend data flow.
 If 분석 관점 is 백엔드 중심, questions must focus on API, service, domain, persistence, auth, and server data flow.
@@ -203,12 +232,13 @@ Adjust question difficulty according to 질문 난이도.
 Repository: ${context.repo.url}
 분석 관점: ${formatFocus(context.focus)}
 질문 난이도: ${formatQuestionLevel(context.questionLevel)}
+질문 유형: ${formatQuestionTypes(context.questionTypes)}
 관심 기능: ${formatQuestionTargets(context.questionTargets)}
 Difficulty guide:
 ${buildQuestionLevelGuide(context.questionLevel)}
 
 Question plan:
-${buildQuestionPlan(context.focus)}
+${buildQuestionPlan(context.focus, context.questionTypes)}
 
 Code signal candidates:
 ${formatQuestionSignalBuckets(signals, context.focus)}
@@ -217,15 +247,7 @@ Important files:
 ${context.contextFiles.map(formatFileForPrompt).join("\n\n")}
 
 Return this exact JSON shape:
-{
-  "questions": [
-    {"id":"q1","type":"구조 이해","question":"string","relatedFiles":["string"]},
-    {"id":"q2","type":"요청 흐름","question":"string","relatedFiles":["string"]},
-    {"id":"q3","type":"데이터 흐름","question":"string","relatedFiles":["string"]},
-    {"id":"q4","type":"변경 영향도","question":"string","relatedFiles":["string"]},
-    {"id":"q5","type":"면접형","question":"string","relatedFiles":["string"]}
-  ]
-}`;
+${buildQuestionJsonShape(context.questionTypes)}`;
 
   const providerResult = await callConfiguredProvider(
     prompt,
@@ -258,7 +280,7 @@ Return this exact JSON shape:
 
   return {
     ai: providerResult.usage,
-    questions: normalizeQuestions(parsed.questions, fallback.questions)
+    questions: normalizeQuestions(parsed.questions, fallback.questions, context.questionTypes)
   };
 }
 
@@ -806,15 +828,16 @@ function normalizeKeyFiles(input: FileSummary[] | undefined, fallback: FileSumma
 
 function normalizeQuestions(
   input: UnderstandingQuestion[] | undefined,
-  fallback: UnderstandingQuestion[]
+  fallback: UnderstandingQuestion[],
+  questionTypes: QuestionType[]
 ): UnderstandingQuestion[] {
   if (!Array.isArray(input) || input.length < 5) return fallback;
-  const allowedTypes = new Set(["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"]);
+  const allowedTypes = new Set(questionTypes);
   const fallbackFiles = fallback.flatMap((question) => question.relatedFiles);
 
   return input.slice(0, 5).map((question, index) => ({
     id: question.id || `q${index + 1}`,
-    type: allowedTypes.has(question.type) ? question.type : fallback[index]?.type ?? "구조 이해",
+    type: allowedTypes.has(question.type) ? question.type : questionTypes[index % questionTypes.length] ?? fallback[index]?.type ?? "구조 이해",
     question: question.question || fallback[index]?.question || "프로젝트 구조를 설명해주세요.",
     relatedFiles: normalizeRelatedFiles(question.relatedFiles, fallbackFiles)
   }));

@@ -13,6 +13,7 @@ export type SourceFile = {
 
 export type AnalysisFocus = "balanced" | "frontend" | "backend";
 export type QuestionLevel = "basic" | "standard" | "deep";
+export type QuestionType = "구조 이해" | "요청 흐름" | "데이터 흐름" | "변경 영향도" | "면접형";
 
 export type FileSummary = {
   path: string;
@@ -34,7 +35,7 @@ export type ProjectReport = {
 
 export type UnderstandingQuestion = {
   id: string;
-  type: "구조 이해" | "요청 흐름" | "데이터 흐름" | "변경 영향도" | "면접형";
+  type: QuestionType;
   question: string;
   relatedFiles: string[];
 };
@@ -45,6 +46,7 @@ export type AnalysisResult = {
   fileCount: number;
   focus: AnalysisFocus;
   questionLevel: QuestionLevel;
+  questionTypes: QuestionType[];
   questionTargets: string[];
   ai: AiUsage;
   report: ProjectReport;

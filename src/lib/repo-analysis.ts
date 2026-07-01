@@ -1,4 +1,4 @@
-import type { AnalysisFocus, AnalysisResult, FileSummary, QuestionLevel, RepoInfo, SourceFile } from "./types";
+import type { AnalysisFocus, AnalysisResult, FileSummary, QuestionLevel, QuestionType, RepoInfo, SourceFile } from "./types";
 import { extractCodeSignals } from "./code-signals";
 
 const PRIORITY_PATTERNS = [
@@ -17,6 +17,7 @@ export function buildStaticContext(
   files: SourceFile[],
   focus: AnalysisFocus = "balanced",
   questionLevel: QuestionLevel = "standard",
+  questionTypes: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"],
   questionTargets: string[] = []
 ) {
   const selectedFiles = selectContextFiles(files, focus, questionTargets);
@@ -28,6 +29,7 @@ export function buildStaticContext(
     repo,
     focus,
     questionLevel,
+    questionTypes,
     questionTargets,
     fileCount: files.length,
     contextFiles,
@@ -41,6 +43,7 @@ export function buildFallbackAnalysis(
   fileCount: number,
   focus: AnalysisFocus,
   questionLevel: QuestionLevel,
+  questionTypes: QuestionType[],
   questionTargets: string[],
   contextFiles: FileSummary[],
   tree: string[],
@@ -62,6 +65,7 @@ export function buildFallbackAnalysis(
     fileCount,
     focus,
     questionLevel,
+    questionTypes,
     questionTargets,
     ai: {
       provider: "fallback",
@@ -87,31 +91,31 @@ export function buildFallbackAnalysis(
     questions: [
       {
         id: "q1",
-        type: "구조 이해",
+        type: questionTypes[0] ?? "구조 이해",
         question: `${primaryFile}의 역할을 기준으로 이 프로젝트의 실행 진입점과 주요 폴더 구조를 설명해주세요.`,
         relatedFiles: [primaryFile, secondaryFile, tertiaryFile]
       },
       {
         id: "q2",
-        type: "요청 흐름",
+        type: questionTypes[1 % questionTypes.length] ?? "요청 흐름",
         question: `${secondaryFile}에서 시작되는 요청 또는 화면 흐름이 어떤 파일들과 연결되는지 설명해주세요.`,
         relatedFiles: [secondaryFile, primaryFile, tertiaryFile]
       },
       {
         id: "q3",
-        type: "데이터 흐름",
+        type: questionTypes[2 % questionTypes.length] ?? "데이터 흐름",
         question: `${tertiaryFile}를 보면 데이터가 어디에서 들어오고 어디로 전달되는지 어떻게 추론할 수 있나요?`,
         relatedFiles: [tertiaryFile, primaryFile, secondaryFile]
       },
       {
         id: "q4",
-        type: "변경 영향도",
+        type: questionTypes[3 % questionTypes.length] ?? "변경 영향도",
         question: `${primaryFile}의 동작을 수정한다면 ${secondaryFile}와 함께 어떤 영향 범위를 확인해야 하나요?`,
         relatedFiles: [primaryFile, secondaryFile, tertiaryFile]
       },
       {
         id: "q5",
-        type: "면접형",
+        type: questionTypes[4 % questionTypes.length] ?? "면접형",
         question: `면접에서 ${primaryFile}와 ${secondaryFile}를 근거로 이 프로젝트의 핵심 구조를 어떻게 설명하겠습니까?`,
         relatedFiles: [primaryFile, secondaryFile]
       }

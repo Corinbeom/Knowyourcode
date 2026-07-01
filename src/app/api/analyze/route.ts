@@ -3,10 +3,11 @@ import { generateAnalysis } from "@/lib/ai";
 import { fetchRepoFiles, parseGitHubUrl } from "@/lib/github";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
-import type { AnalysisFocus, QuestionLevel } from "@/lib/types";
+import type { AnalysisFocus, QuestionLevel, QuestionType } from "@/lib/types";
 
 export const runtime = "nodejs";
 const ANALYZE_LIMIT_PER_HOUR = Number(process.env.ANALYZE_LIMIT_PER_HOUR ?? 5);
+const QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"];
 
 export async function POST(request: Request) {
   try {
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
       url?: string;
       focus?: AnalysisFocus;
       questionLevel?: QuestionLevel;
+      questionTypes?: QuestionType[];
       questionTargets?: string[] | string;
     };
     if (!body.url) {
@@ -28,6 +30,7 @@ export async function POST(request: Request) {
 
     const focus = normalizeFocus(body.focus);
     const questionLevel = normalizeQuestionLevel(body.questionLevel);
+    const questionTypes = normalizeQuestionTypes(body.questionTypes);
     const questionTargets = normalizeQuestionTargets(body.questionTargets);
     const repo = parseGitHubUrl(body.url);
     const files = await fetchRepoFiles(repo);
@@ -39,12 +42,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const context = buildStaticContext(repo, files, focus, questionLevel, questionTargets);
+    const context = buildStaticContext(repo, files, focus, questionLevel, questionTypes, questionTargets);
     const fallback = buildFallbackAnalysis(
       repo,
       files.length,
       focus,
       questionLevel,
+      questionTypes,
       questionTargets,
       context.contextFiles,
       context.tree,
@@ -72,6 +76,12 @@ function normalizeFocus(focus: AnalysisFocus | undefined): AnalysisFocus {
 function normalizeQuestionLevel(questionLevel: QuestionLevel | undefined): QuestionLevel {
   if (questionLevel === "basic" || questionLevel === "deep") return questionLevel;
   return "standard";
+}
+
+function normalizeQuestionTypes(input: QuestionType[] | undefined): QuestionType[] {
+  if (!Array.isArray(input)) return QUESTION_TYPES;
+  const selected = input.filter((type): type is QuestionType => QUESTION_TYPES.includes(type));
+  return selected.length ? [...new Set(selected)] : QUESTION_TYPES;
 }
 
 function normalizeQuestionTargets(input: string[] | string | undefined): string[] {
