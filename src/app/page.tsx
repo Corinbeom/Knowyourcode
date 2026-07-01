@@ -1,19 +1,49 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import type { AnalysisResult, EvaluationResult, UnderstandingQuestion } from "@/lib/types";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { AnalysisFocus, AnalysisResult, EvaluationResult, UnderstandingQuestion } from "@/lib/types";
 
 type AnalyzeState = "idle" | "loading" | "ready" | "error";
 type EvaluateState = "idle" | "loading" | "ready" | "error";
 
+const ANALYSIS_STEPS = [
+  {
+    title: "저장소 구조 읽는 중",
+    meta: "GitHub ZIP · file tree",
+    description: "public repository에서 분석 가능한 파일 목록을 가져옵니다."
+  },
+  {
+    title: "분석 대상 파일 고르는 중",
+    meta: "filter · runtime files",
+    description: "node_modules, build 산출물, 테스트 파일을 낮은 우선순위로 분리합니다."
+  },
+  {
+    title: "기술 스택과 진입점 찾는 중",
+    meta: "stack · entry points",
+    description: "package.json, route, page, service, config 파일을 중심으로 구조를 봅니다."
+  },
+  {
+    title: "코드 이해도 질문 생성 중",
+    meta: "questions · code signals",
+    description: "실제 파일명과 함수명을 근거로 프로젝트 맞춤 질문을 만듭니다."
+  },
+  {
+    title: "프로젝트 리포트 정리 중",
+    meta: "report · feedback ready",
+    description: "요청 흐름, 데이터 흐름, 다시 봐야 할 파일을 요약합니다."
+  }
+];
+
 export default function Home() {
   const [repoUrl, setRepoUrl] = useState("");
+  const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("balanced");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string>("");
   const [answer, setAnswer] = useState("");
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [analyzeState, setAnalyzeState] = useState<AnalyzeState>("idle");
   const [evaluateState, setEvaluateState] = useState<EvaluateState>("idle");
+  const [analysisStep, setAnalysisStep] = useState(0);
   const [error, setError] = useState("");
   const [evaluationError, setEvaluationError] = useState("");
 
@@ -22,9 +52,21 @@ export default function Home() {
     [analysis, selectedQuestionId]
   );
 
+  useEffect(() => {
+    if (analyzeState !== "loading") return;
+
+    setAnalysisStep(0);
+    const interval = window.setInterval(() => {
+      setAnalysisStep((step) => Math.min(step + 1, ANALYSIS_STEPS.length - 1));
+    }, 1400);
+
+    return () => window.clearInterval(interval);
+  }, [analyzeState]);
+
   async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAnalyzeState("loading");
+    setAnalysisStep(0);
     setEvaluateState("idle");
     setError("");
     setEvaluationError("");
@@ -33,7 +75,7 @@ export default function Home() {
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: repoUrl })
+      body: JSON.stringify({ url: repoUrl, focus: analysisFocus })
     });
     const data = await response.json();
 
@@ -100,14 +142,35 @@ export default function Home() {
             </h1>
             <p className="hero__copy">
               GitHub 저장소를 분석하고, 실제 파일과 흐름을 근거로
-              </p>
-              <br />
-              <p className="hero__copy">
-              코드 이해도 질문과
-              답변 피드백을 제공합니다. 내 코드가 정말 내 것인지 확인해보세요.
+              코드 이해도 질문과 답변 피드백을 제공합니다. 내 코드가 정말 내 것인지
+              확인해보세요.
             </p>
             <form className="repo-form" onSubmit={handleAnalyze}>
               <label htmlFor="repoUrl">Public GitHub repository URL</label>
+              <fieldset className="focus-control">
+                <legend>분석 관점</legend>
+                <FocusOption
+                  label="전체 균형"
+                  description="프론트와 백엔드를 함께 봅니다."
+                  value="balanced"
+                  selected={analysisFocus}
+                  onChange={setAnalysisFocus}
+                />
+                <FocusOption
+                  label="프론트엔드 중심"
+                  description="화면, 라우팅, 상태 흐름을 우선합니다."
+                  value="frontend"
+                  selected={analysisFocus}
+                  onChange={setAnalysisFocus}
+                />
+                <FocusOption
+                  label="백엔드 중심"
+                  description="API, 서비스, 데이터 흐름을 우선합니다."
+                  value="backend"
+                  selected={analysisFocus}
+                  onChange={setAnalysisFocus}
+                />
+              </fieldset>
               <div className="repo-form__row">
                 <div className="repo-input-wrap">
                   <span>github</span>
@@ -133,6 +196,7 @@ export default function Home() {
               <span>· 무료 리포트 제공</span>
               <span>· 카드 등록 불필요</span>
             </div>
+            <AnalysisProgress state={analyzeState} activeStep={analysisStep} />
             {analyzeState === "error" ? <p className="error">{error}</p> : null}
           </div>
           <HeroPreview />
@@ -187,6 +251,85 @@ export default function Home() {
         </section>
       )}
     </main>
+  );
+}
+
+function FocusOption({
+  label,
+  description,
+  value,
+  selected,
+  onChange
+}: {
+  label: string;
+  description: string;
+  value: AnalysisFocus;
+  selected: AnalysisFocus;
+  onChange: (value: AnalysisFocus) => void;
+}) {
+  return (
+    <label className={selected === value ? "focus-option is-selected" : "focus-option"}>
+      <input
+        type="radio"
+        name="analysisFocus"
+        value={value}
+        checked={selected === value}
+        onChange={() => onChange(value)}
+      />
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+    </label>
+  );
+}
+
+function AnalysisProgress({
+  state,
+  activeStep
+}: {
+  state: AnalyzeState;
+  activeStep: number;
+}) {
+  if (state === "idle") return null;
+
+  const isDone = state === "ready";
+  const isError = state === "error";
+  const visibleStep = isDone ? ANALYSIS_STEPS.length : activeStep;
+
+  return (
+    <section className="analysis-progress">
+      <div className="analysis-progress__header">
+        <div>
+          <p className="section-label">분석 진행 상황</p>
+          <h2>
+            {isDone
+              ? "분석이 완료됐습니다"
+              : isError
+                ? "분석을 완료하지 못했습니다"
+                : "저장소를 읽고 있습니다"}
+          </h2>
+        </div>
+        <span>
+          {Math.min(visibleStep + (isDone ? 0 : 1), ANALYSIS_STEPS.length)} / {ANALYSIS_STEPS.length}
+        </span>
+      </div>
+      <ol>
+        {ANALYSIS_STEPS.map((step, index) => {
+          const status = isDone || index < activeStep ? "done" : index === activeStep && !isError ? "active" : "pending";
+          return (
+            <li className={`analysis-step is-${status}`} key={step.title}>
+              <span className="analysis-step__dot">{status === "done" ? "✓" : status === "active" ? "…" : ""}</span>
+              <div>
+                <strong>{step.title}</strong>
+                <p>{status === "pending" ? "대기 중" : step.description}</p>
+              </div>
+              <small>{status === "pending" ? "queued" : step.meta}</small>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
@@ -251,6 +394,7 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
           <h2>{analysis.repo.owner}/{analysis.repo.repo}</h2>
         </div>
         <div className="report__badges">
+          <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
           <div className="score-chip">난이도 {report.difficulty}</div>
           <div className={analysis.ai.used ? "ai-chip is-live" : "ai-chip"}>
             {analysis.ai.used ? `${analysis.ai.provider} 분석` : "기본 분석"}
@@ -288,6 +432,12 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
       </div>
     </section>
   );
+}
+
+function formatFocusLabel(focus: AnalysisFocus): string {
+  if (focus === "frontend") return "프론트엔드 중심";
+  if (focus === "backend") return "백엔드 중심";
+  return "전체 균형";
 }
 
 function QuestionPanel({
