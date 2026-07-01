@@ -17,7 +17,7 @@ type StaticContext = {
   packageInfo: Record<string, unknown> | null;
 };
 
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
 const DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant";
 const ANALYSIS_OUTPUT_TOKENS = Number(process.env.ANALYSIS_OUTPUT_TOKENS ?? 2200);
 const EVALUATION_OUTPUT_TOKENS = Number(process.env.EVALUATION_OUTPUT_TOKENS ?? 1200);
