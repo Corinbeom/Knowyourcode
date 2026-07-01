@@ -76,30 +76,66 @@ export default function Home() {
 
   return (
     <main>
+      <nav className="site-nav">
+        <div className="site-nav__inner">
+          <div className="brand">
+            <span className="brand__mark">KYC</span>
+            <span>KnowYourCode</span>
+          </div>
+          <div className="nav-meta">
+            <span className="nav-dot" />
+            Public repo analysis
+            <span>Gemini 3.1 Flash Lite</span>
+          </div>
+        </div>
+      </nav>
       <section className="hero">
         <div className="hero__inner">
-          <p className="eyebrow">AI 코드 이해도 테스트</p>
-          <h1>KnowYourCode</h1>
-          <p className="hero__copy">
-            GitHub 저장소를 입력하면 프로젝트 구조를 분석하고, 질문과 피드백으로
-            내가 코드를 설명할 수 있는지 확인합니다.
-          </p>
-          <form className="repo-form" onSubmit={handleAnalyze}>
-            <label htmlFor="repoUrl">Public GitHub repository URL</label>
-            <div className="repo-form__row">
-              <input
-                id="repoUrl"
-                value={repoUrl}
-                onChange={(event) => setRepoUrl(event.target.value)}
-                placeholder="https://github.com/vercel/next.js"
-                disabled={analyzeState === "loading"}
-              />
-              <button type="submit" disabled={analyzeState === "loading" || !repoUrl.trim()}>
-                {analyzeState === "loading" ? "분석 중" : "분석하기"}
-              </button>
+          <div>
+            <p className="eyebrow">AI Code Understanding · for developers</p>
+            <h1>
+              AI가 만든 코드,
+              <br />
+              <span className="gradient-text">설명할 수 있나요?</span>
+            </h1>
+            <p className="hero__copy">
+              GitHub 저장소를 분석하고, 실제 파일과 흐름을 근거로
+              </p>
+              <br />
+              <p className="hero__copy">
+              코드 이해도 질문과
+              답변 피드백을 제공합니다. 내 코드가 정말 내 것인지 확인해보세요.
+            </p>
+            <form className="repo-form" onSubmit={handleAnalyze}>
+              <label htmlFor="repoUrl">Public GitHub repository URL</label>
+              <div className="repo-form__row">
+                <div className="repo-input-wrap">
+                  <span>github</span>
+                  <input
+                    id="repoUrl"
+                    value={repoUrl}
+                    onChange={(event) => setRepoUrl(event.target.value)}
+                    placeholder="https://github.com/username/project"
+                    disabled={analyzeState === "loading"}
+                  />
+                </div>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={analyzeState === "loading" || !repoUrl.trim()}
+                >
+                  {analyzeState === "loading" ? "분석 중" : "테스트 시작 →"}
+                </button>
+              </div>
+            </form>
+            <div className="hero__meta">
+              <span>· Public repository만 지원</span>
+              <span>· 무료 리포트 제공</span>
+              <span>· 카드 등록 불필요</span>
             </div>
-          </form>
-          {analyzeState === "error" ? <p className="error">{error}</p> : null}
+            {analyzeState === "error" ? <p className="error">{error}</p> : null}
+          </div>
+          <HeroPreview />
         </div>
       </section>
 
@@ -117,7 +153,7 @@ export default function Home() {
           />
           <form className="answer-panel" onSubmit={handleEvaluate}>
             <div>
-              <p className="section-label">답변 평가</p>
+              <p className="section-label">Your Answer</p>
               <h2>{selectedQuestion?.question ?? "질문을 선택해주세요."}</h2>
             </div>
             <textarea
@@ -126,9 +162,12 @@ export default function Home() {
               placeholder="코드 파일명, 요청 흐름, 수정 영향 범위를 연결해서 답변해보세요."
               disabled={evaluateState === "loading"}
             />
-            <button type="submit" disabled={evaluateState === "loading" || !answer.trim()}>
-              {evaluateState === "loading" ? "평가 중" : "답변 평가하기"}
-            </button>
+            <div className="answer-actions">
+              <span>답변은 코드 근거를 기반으로 평가됩니다.</span>
+              <button type="submit" disabled={evaluateState === "loading" || !answer.trim()}>
+                {evaluateState === "loading" ? "평가 중" : "답변 제출 →"}
+              </button>
+            </div>
             {evaluateState === "error" ? <p className="error">{evaluationError}</p> : null}
           </form>
           {evaluation ? <EvaluationView evaluation={evaluation} /> : null}
@@ -148,6 +187,56 @@ export default function Home() {
         </section>
       )}
     </main>
+  );
+}
+
+function HeroPreview() {
+  return (
+    <aside className="preview-card">
+      <div className="preview-card__chrome">
+        <div className="window-dots">
+          <span />
+          <span />
+          <span />
+        </div>
+        <span>report / repo-analysis.json</span>
+        <span>v1</span>
+      </div>
+      <div className="preview-card__body">
+        <div className="preview-score">
+          <small>Understanding Score</small>
+          <strong>72</strong>
+          <div className="progress-track">
+            <div className="progress-fill" />
+          </div>
+          <div className="metric-list">
+            <div>
+              <span>Complexity</span>
+              <span>Medium</span>
+            </div>
+            <div>
+              <span>Interview Risk</span>
+              <span>High</span>
+            </div>
+            <div>
+              <span>Evidence</span>
+              <span>Files</span>
+            </div>
+          </div>
+        </div>
+        <div className="preview-panel">
+          <small>Weak Areas</small>
+          <div className="tag-list">
+            <span className="tag danger">Auth Flow</span>
+            <span className="tag warning">Test Coverage</span>
+            <span className="tag warning">Data Flow</span>
+          </div>
+          <p className="preview-question">
+            로그인 요청이 어떤 API route와 service 파일을 거쳐 처리되는지 설명해보세요.
+          </p>
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -172,7 +261,7 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
         <p className="notice">{analysis.ai.reason}</p>
       ) : null}
       <p className="summary">{report.oneLineSummary}</p>
-      <div className="grid">
+      <div className="report-grid">
         <InfoBlock title="기술 스택" items={report.techStack} />
         <InfoBlock title="핵심 기능" items={report.coreFeatures} />
         <InfoBlock title="주요 구조" items={report.folderStructure.slice(0, 8)} />
@@ -213,21 +302,31 @@ function QuestionPanel({
   return (
     <section className="questions">
       <div>
-        <p className="section-label">이해도 질문</p>
+        <p className="section-label">Understanding Questions</p>
         <h2>질문 5개</h2>
       </div>
-      <div className="question-list">
-        {questions.map((question) => (
-          <button
-            type="button"
-            className={question.id === selectedQuestionId ? "question is-active" : "question"}
-            key={question.id}
-            onClick={() => onSelect(question.id)}
-          >
-            <span>{question.type}</span>
-            {question.question}
-          </button>
-        ))}
+      <div className="question-layout">
+        <div className="question-list">
+          {questions.map((question) => (
+            <button
+              type="button"
+              className={question.id === selectedQuestionId ? "question is-active" : "question"}
+              key={question.id}
+              onClick={() => onSelect(question.id)}
+            >
+              <span>{question.type}</span>
+              {question.question}
+            </button>
+          ))}
+        </div>
+        <aside className="related-panel surface-card">
+          <p className="section-label">Related Files</p>
+          <ul>
+            {(questions.find((question) => question.id === selectedQuestionId)?.relatedFiles ?? []).map((file) => (
+              <li key={file}>{file}</li>
+            ))}
+          </ul>
+        </aside>
       </div>
     </section>
   );
