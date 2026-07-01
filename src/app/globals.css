@@ -785,6 +785,12 @@ textarea:focus,
   font-size: 11px;
 }
 
+.usage-note {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .evaluation {
   display: grid;
   grid-template-columns: 180px 1fr;

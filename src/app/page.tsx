@@ -5,6 +5,16 @@ import type { AnalysisFocus, AnalysisResult, EvaluationResult, UnderstandingQues
 
 type AnalyzeState = "idle" | "loading" | "ready" | "error";
 type EvaluateState = "idle" | "loading" | "ready" | "error";
+type UsageLimit = {
+  limit: number;
+  remaining: number;
+  resetAt: string;
+  retryAfterSeconds?: number;
+};
+type UsageLimits = {
+  analyze?: UsageLimit;
+  evaluate?: UsageLimit;
+};
 
 const ANALYSIS_STEPS = [
   {
@@ -45,6 +55,7 @@ export default function Home() {
   const [analyzeState, setAnalyzeState] = useState<AnalyzeState>("idle");
   const [evaluateState, setEvaluateState] = useState<EvaluateState>("idle");
   const [analysisStep, setAnalysisStep] = useState(0);
+  const [usageLimits, setUsageLimits] = useState<UsageLimits>({});
   const [error, setError] = useState("");
   const [evaluationError, setEvaluationError] = useState("");
 
@@ -79,6 +90,7 @@ export default function Home() {
       body: JSON.stringify({ url: repoUrl, focus: analysisFocus, questionTargets })
     });
     const data = await response.json();
+    setUsageLimits((current) => ({ ...current, ...data.limits, analyze: data.limit ?? data.limits?.analyze ?? current.analyze }));
 
     if (!response.ok) {
       setAnalyzeState("error");
@@ -106,6 +118,7 @@ export default function Home() {
       body: JSON.stringify({ analysis, questionId: selectedQuestionId, answer })
     });
     const data = await response.json();
+    setUsageLimits((current) => ({ ...current, ...data.limits, evaluate: data.limit ?? data.limits?.evaluate ?? current.evaluate }));
 
     if (!response.ok) {
       setEvaluateState("error");
@@ -197,7 +210,7 @@ export default function Home() {
                 <button
                   className="primary-button"
                   type="submit"
-                  disabled={analyzeState === "loading" || !repoUrl.trim()}
+                  disabled={analyzeState === "loading" || !repoUrl.trim() || usageLimits.analyze?.remaining === 0}
                 >
                   {analyzeState === "loading" ? "분석 중" : "테스트 시작 →"}
                 </button>
@@ -206,7 +219,8 @@ export default function Home() {
             <div className="hero__meta">
               <span>· Public repository만 지원</span>
               <span>· 무료 리포트 제공</span>
-              <span>· 카드 등록 불필요</span>
+              <span>· 분석 {formatLimitText(usageLimits.analyze, "5회/시간")}</span>
+              <span>· 평가 {formatLimitText(usageLimits.evaluate, "10회/시간")}</span>
             </div>
             <AnalysisProgress state={analyzeState} activeStep={analysisStep} />
             {analyzeState === "error" ? <p className="error">{error}</p> : null}
@@ -236,14 +250,21 @@ export default function Home() {
               value={answer}
               onChange={(event) => setAnswer(event.target.value)}
               placeholder="코드 파일명, 요청 흐름, 수정 영향 범위를 연결해서 답변해보세요."
+              maxLength={4000}
               disabled={evaluateState === "loading"}
             />
             <div className="answer-actions">
               <span>답변은 코드 근거를 기반으로 평가됩니다.</span>
-              <button type="submit" disabled={evaluateState === "loading" || !answer.trim()}>
+              <button
+                type="submit"
+                disabled={evaluateState === "loading" || !answer.trim() || usageLimits.evaluate?.remaining === 0}
+              >
                 {evaluateState === "loading" ? "평가 중" : "답변 제출 →"}
               </button>
             </div>
+            <p className="usage-note">
+              남은 평가 {formatLimitText(usageLimits.evaluate, "10회/시간")} · 답변 최대 4,000자
+            </p>
             {evaluateState === "error" ? <p className="error">{evaluationError}</p> : null}
           </form>
           {evaluation ? <EvaluationView evaluation={evaluation} /> : null}
@@ -264,6 +285,21 @@ export default function Home() {
       )}
     </main>
   );
+}
+
+function formatLimitText(limit: UsageLimit | undefined, fallback: string): string {
+  if (!limit) return fallback;
+  if (limit.remaining === 0) return `0/${limit.limit} · ${formatResetTime(limit.resetAt)} 후 초기화`;
+  return `${limit.remaining}/${limit.limit}회 남음`;
+}
+
+function formatResetTime(resetAt: string): string {
+  const resetDate = new Date(resetAt);
+  if (Number.isNaN(resetDate.getTime())) return "잠시";
+
+  const diffMinutes = Math.max(Math.ceil((resetDate.getTime() - Date.now()) / 60_000), 1);
+  if (diffMinutes >= 60) return `${Math.ceil(diffMinutes / 60)}시간`;
+  return `${diffMinutes}분`;
 }
 
 function FocusOption({

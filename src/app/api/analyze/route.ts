@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateAnalysis } from "@/lib/ai";
 import { fetchRepoFiles, parseGitHubUrl } from "@/lib/github";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
 import type { AnalysisFocus } from "@/lib/types";
 
@@ -10,11 +10,11 @@ const ANALYZE_LIMIT_PER_HOUR = Number(process.env.ANALYZE_LIMIT_PER_HOUR ?? 5);
 
 export async function POST(request: Request) {
   try {
-    const rateLimited = checkRateLimit(request, {
+    const rateLimit = consumeRateLimit(request, {
       namespace: "analyze",
       limit: ANALYZE_LIMIT_PER_HOUR
     });
-    if (rateLimited) return rateLimited;
+    if (rateLimit.response) return rateLimit.response;
 
     const body = (await request.json()) as {
       url?: string;
@@ -49,7 +49,12 @@ export async function POST(request: Request) {
     );
     const analysis = await generateAnalysis(context, fallback);
 
-    return NextResponse.json({ analysis });
+    return NextResponse.json({
+      analysis,
+      limits: {
+        analyze: rateLimit.meta
+      }
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
