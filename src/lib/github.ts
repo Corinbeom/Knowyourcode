@@ -68,7 +68,7 @@ const TEXT_EXTENSIONS = new Set([
 
 const MAX_FILE_SIZE = 60_000;
 const MAX_TOTAL_FILES = 1_000;
-const MAX_REPO_ZIP_BYTES = Number(process.env.MAX_REPO_ZIP_BYTES ?? 15_000_000);
+const MAX_REPO_ZIP_BYTES = Number(process.env.MAX_REPO_ZIP_BYTES ?? 50_000_000);
 
 export function parseGitHubUrl(input: string): RepoInfo {
   let url: URL;
