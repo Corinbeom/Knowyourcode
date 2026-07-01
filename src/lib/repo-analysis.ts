@@ -1,21 +1,22 @@
-import type { AnalysisResult, FileSummary, RepoInfo, SourceFile } from "./types";
+import type { AnalysisFocus, AnalysisResult, FileSummary, RepoInfo, SourceFile } from "./types";
 import { extractCodeSignals } from "./code-signals";
 
 const PRIORITY_PATTERNS = [
   /README/i,
   /^package\.json$/,
-  /^(src|app|pages|components|lib|server|routes|api)\//,
-  /(route|router|controller|service|model|schema|store|auth|config)/i
+  /^(backend|frontend|src|app|pages|components|lib|server|routes|api)\//,
+  /(route|router|controller|service|repository|entity|model|schema|store|auth|config)/i
 ];
 
-export function buildStaticContext(repo: RepoInfo, files: SourceFile[]) {
-  const selectedFiles = selectContextFiles(files);
+export function buildStaticContext(repo: RepoInfo, files: SourceFile[], focus: AnalysisFocus = "balanced") {
+  const selectedFiles = selectContextFiles(files, focus);
   const contextFiles = selectedFiles.map(toFileSummary);
   const tree = summarizeTree(files);
   const packageJson = files.find((file) => file.path === "package.json");
 
   return {
     repo,
+    focus,
     fileCount: files.length,
     contextFiles,
     tree,
@@ -26,13 +27,14 @@ export function buildStaticContext(repo: RepoInfo, files: SourceFile[]) {
 export function buildFallbackAnalysis(
   repo: RepoInfo,
   fileCount: number,
+  focus: AnalysisFocus,
   contextFiles: FileSummary[],
   tree: string[],
   packageInfo: Record<string, unknown> | null
 ): AnalysisResult {
   const stack = inferStack(packageInfo, contextFiles);
   const keyFiles = contextFiles.slice(0, 6);
-  const signals = extractCodeSignals(contextFiles);
+  const signals = extractCodeSignals(contextFiles, focus);
   const primarySignal = signals[0];
   const secondarySignal = signals[1] ?? primarySignal;
   const tertiarySignal = signals[2] ?? secondarySignal;
@@ -44,6 +46,7 @@ export function buildFallbackAnalysis(
     repo,
     analyzedAt: new Date().toISOString(),
     fileCount,
+    focus,
     ai: {
       provider: "fallback",
       used: false,
@@ -100,31 +103,86 @@ export function buildFallbackAnalysis(
   };
 }
 
-function rankFiles(files: SourceFile[]): SourceFile[] {
-  return [...files].sort((a, b) => scoreFile(b.path) - scoreFile(a.path));
+function rankFiles(files: SourceFile[], focus: AnalysisFocus): SourceFile[] {
+  return [...files].sort((a, b) => scoreFile(b.path, focus) - scoreFile(a.path, focus));
 }
 
-function selectContextFiles(files: SourceFile[]): SourceFile[] {
-  const runtimeFiles = rankFiles(files.filter((file) => !isTestFile(file.path))).slice(0, 10);
-  const supportFiles = rankFiles(files.filter((file) => isTestFile(file.path))).slice(0, 1);
-  return [...runtimeFiles, ...supportFiles].slice(0, 11);
+function selectContextFiles(files: SourceFile[], focus: AnalysisFocus): SourceFile[] {
+  const runtimeCandidates = rankFiles(files.filter((file) => !isTestFile(file.path)), focus);
+
+  if (focus === "balanced") {
+    const frontendFiles = runtimeCandidates.filter((file) => isClientFacingFile(file.path)).slice(0, 5);
+    const backendFiles = runtimeCandidates.filter((file) => isServerFacingFile(file.path)).slice(0, 5);
+    const sharedFiles = runtimeCandidates
+      .filter((file) => !frontendFiles.includes(file) && !backendFiles.includes(file))
+      .filter((file) => !isClientFacingFile(file.path) && !isServerFacingFile(file.path))
+      .slice(0, 4);
+    const supportFiles = rankFiles(files.filter((file) => isTestFile(file.path)), focus).slice(0, 1);
+    return [...frontendFiles, ...backendFiles, ...sharedFiles, ...supportFiles].slice(0, 15);
+  }
+
+  const primaryLimit = 11;
+  const complementLimit = 2;
+  const primaryFiles = runtimeCandidates.filter((file) => matchesFocus(file.path, focus)).slice(0, primaryLimit);
+  const complementFiles = runtimeCandidates
+    .filter((file) => !primaryFiles.includes(file))
+    .filter((file) => !matchesFocus(file.path, focus))
+    .slice(0, complementLimit);
+  return [...primaryFiles, ...complementFiles].slice(0, 15);
 }
 
-function scoreFile(path: string): number {
+function scoreFile(path: string, focus: AnalysisFocus): number {
   let score = 0;
   for (const pattern of PRIORITY_PATTERNS) {
     if (pattern.test(path)) score += 10;
   }
   if (path.split("/").length <= 2) score += 3;
-  if (/app\/api\/|pages\/api\/|route\.(ts|tsx|js|jsx)$|router|controller/i.test(path)) score += 18;
-  if (/service|lib|auth|repository|model|schema|store|db|database/i.test(path)) score += 14;
-  if (/page\.(tsx|jsx|ts|js)$|component|components\//i.test(path)) score += 10;
+  if (isEntrypointFile(path)) score += 18;
+  if (isBusinessLogicFile(path)) score += 16;
+  if (isDataAccessFile(path)) score += 14;
+  if (isConfigFile(path)) score += 10;
+  if (isUiFile(path)) score += 10;
+  if (matchesFocus(path, focus)) score += 18;
   if (isTestFile(path)) score -= 35;
   return score;
 }
 
+function matchesFocus(path: string, focus: AnalysisFocus): boolean {
+  if (focus === "balanced") return true;
+  if (focus === "frontend") return isClientFacingFile(path);
+  return isServerFacingFile(path);
+}
+
+function isClientFacingFile(path: string): boolean {
+  return /(^|\/)(frontend|client|web|app|pages|components|views|screens|ui)(\/|$)|\.(tsx|jsx|vue|svelte|astro)$/i.test(path);
+}
+
+function isServerFacingFile(path: string): boolean {
+  return /(^|\/)(backend|server|api|routes|controllers?|services?|repositories?|entities?|models?|domain|infra|config)(\/|$)|\.(java|kt|go|py|rb|php|cs|rs)$/i.test(path);
+}
+
+function isEntrypointFile(path: string): boolean {
+  return /(^|\/)(api|routes?|controllers?)(\/|$)|route\.(ts|tsx|js|jsx)$|router|controller|handler/i.test(path);
+}
+
+function isBusinessLogicFile(path: string): boolean {
+  return /service|usecase|interactor|command|handler|domain|auth|security/i.test(path);
+}
+
+function isDataAccessFile(path: string): boolean {
+  return /repository|entity|model|schema|store|db|database|dao|mapper|prisma/i.test(path);
+}
+
+function isConfigFile(path: string): boolean {
+  return /config|\.config\.|package\.json|build\.gradle|settings\.gradle|pom\.xml|application\.(yml|yaml|properties)|docker/i.test(path);
+}
+
+function isUiFile(path: string): boolean {
+  return /(^|\/)(components|pages|app|views|screens|ui)(\/|$)|page\.(tsx|jsx|ts|js)$|component/i.test(path);
+}
+
 function isTestFile(path: string): boolean {
-  return /(^|\/)(__tests__|test|tests|spec)(\/|$)|\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(path);
+  return /(^|\/)(__tests__|test|tests|spec)(\/|$)|\.(test|spec)\.(ts|tsx|js|jsx|java|kt)$/i.test(path);
 }
 
 function toFileSummary(file: SourceFile): FileSummary {
@@ -137,10 +195,11 @@ function toFileSummary(file: SourceFile): FileSummary {
 
 function inferFileReason(path: string): string {
   if (/README/i.test(path)) return "프로젝트 설명과 실행 방법을 확인할 수 있는 파일";
-  if (path === "package.json") return "기술 스택, 실행 스크립트, 의존성을 확인할 수 있는 파일";
-  if (/route|router|api/i.test(path)) return "요청 진입점과 API 흐름을 확인할 수 있는 파일";
-  if (/component|page/i.test(path)) return "사용자 화면과 UI 흐름을 확인할 수 있는 파일";
-  if (/service|lib|util/i.test(path)) return "비즈니스 로직 또는 공통 로직을 확인할 수 있는 파일";
+  if (isConfigFile(path)) return "기술 스택, 실행 설정, 배포 구성을 확인할 수 있는 파일";
+  if (isEntrypointFile(path)) return "요청 진입점과 API 흐름을 확인할 수 있는 파일";
+  if (isBusinessLogicFile(path)) return "비즈니스 로직과 기능 흐름을 확인할 수 있는 파일";
+  if (isDataAccessFile(path)) return "데이터 모델과 저장소 접근 흐름을 확인할 수 있는 파일";
+  if (isUiFile(path)) return "사용자 화면과 UI 흐름을 확인할 수 있는 파일";
   if (/test|spec/i.test(path)) return "테스트 범위와 기대 동작을 확인할 수 있는 파일";
   return "프로젝트 구조 이해에 참고할 수 있는 파일";
 }
@@ -181,6 +240,13 @@ function inferStack(packageInfo: Record<string, unknown> | null, files: FileSumm
   }
   if (dependencies.prisma) stack.add("Prisma");
   if (dependencies.tailwindcss) stack.add("Tailwind CSS");
+  if (files.some((file) => file.path.endsWith(".java"))) stack.add("Java");
+  if (files.some((file) => file.path.endsWith(".py"))) stack.add("Python");
+  if (files.some((file) => file.path.endsWith(".go"))) stack.add("Go");
+  if (files.some((file) => file.path.endsWith(".cs"))) stack.add("C#");
+  if (files.some((file) => /SpringApplication|@SpringBootApplication/i.test(file.excerpt))) stack.add("Spring Boot");
+  if (files.some((file) => /FastAPI|from fastapi|import fastapi/i.test(file.excerpt))) stack.add("FastAPI");
+  if (files.some((file) => /express\(|from ['"]express|require\(['"]express/i.test(file.excerpt))) stack.add("Express");
   if (!stack.size) stack.add("JavaScript/TypeScript");
 
   return [...stack];

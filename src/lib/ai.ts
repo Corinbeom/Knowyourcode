@@ -1,5 +1,6 @@
 import type {
   AiUsage,
+  AnalysisFocus,
   AnalysisResult,
   EvaluationResult,
   FileSummary,
@@ -7,10 +8,11 @@ import type {
   RepoInfo,
   UnderstandingQuestion
 } from "./types";
-import { extractCodeSignals, formatSignalsForPrompt } from "./code-signals";
+import { extractCodeSignals, formatSignalsForPrompt, type CodeSignal } from "./code-signals";
 
 type StaticContext = {
   repo: RepoInfo;
+  focus: AnalysisFocus;
   fileCount: number;
   contextFiles: FileSummary[];
   tree: string[];
@@ -27,6 +29,85 @@ type ProviderResult = {
   usage: AiUsage;
   retryable?: boolean;
 };
+
+function formatFocus(focus: AnalysisFocus): string {
+  if (focus === "frontend") return "프론트엔드 중심";
+  if (focus === "backend") return "백엔드 중심";
+  return "전체 균형";
+}
+
+function buildQuestionPlan(focus: AnalysisFocus): string {
+  if (focus === "frontend") {
+    return [
+      "- q1 구조 이해: page/component/layout 중 하나의 역할",
+      "- q2 요청 흐름: frontend route, API call, form submit, navigation 흐름",
+      "- q3 데이터 흐름: client state, props, server response, cache 중 하나",
+      "- q4 변경 영향도: UI 기능 변경 시 함께 봐야 할 파일",
+      "- q5 면접형: frontend 설계 의도 또는 사용자 경험 리스크"
+    ].join("\n");
+  }
+
+  if (focus === "backend") {
+    return [
+      "- q1 구조 이해: API/controller/handler 또는 service 계층 역할",
+      "- q2 요청 흐름: request가 service/domain/persistence까지 이동하는 흐름",
+      "- q3 데이터 흐름: repository/entity/model/schema/database 중 하나",
+      "- q4 변경 영향도: business rule 변경 시 영향받는 계층",
+      "- q5 면접형: 장애, 예외, 보안, 트랜잭션, 운영 리스크 중 하나"
+    ].join("\n");
+  }
+
+  return [
+    "- q1 구조 이해: frontend page/component 또는 client entry 파일",
+    "- q2 요청 흐름: backend API/controller/service 또는 server entry 파일",
+    "- q3 데이터 흐름: frontend와 backend 사이 데이터 이동 또는 저장소 접근",
+    "- q4 변경 영향도: 한 기능 변경 시 frontend와 backend 중 다른 계층 영향",
+    "- q5 면접형: auth/security가 아닌 다른 핵심 도메인이나 운영 리스크"
+  ].join("\n");
+}
+
+function formatQuestionSignalBuckets(signals: CodeSignal[], focus: AnalysisFocus): string {
+  const frontend = signals.filter((signal) => isClientFacingPath(signal.path));
+  const backend = signals.filter((signal) => isServerFacingPath(signal.path));
+  const shared = signals.filter(
+    (signal) => !isClientFacingPath(signal.path) && !isServerFacingPath(signal.path)
+  );
+
+  if (focus === "frontend") {
+    return [
+      "Primary frontend candidates:",
+      formatSignalsForPrompt(frontend.slice(0, 14)),
+      "Secondary related candidates:",
+      formatSignalsForPrompt([...shared, ...backend].slice(0, 6))
+    ].join("\n");
+  }
+
+  if (focus === "backend") {
+    return [
+      "Primary backend candidates:",
+      formatSignalsForPrompt(backend.slice(0, 14)),
+      "Secondary related candidates:",
+      formatSignalsForPrompt([...shared, ...frontend].slice(0, 6))
+    ].join("\n");
+  }
+
+  return [
+    "Frontend candidates:",
+    formatSignalsForPrompt(frontend.slice(0, 8)),
+    "Backend candidates:",
+    formatSignalsForPrompt(backend.slice(0, 8)),
+    "Shared/config candidates:",
+    formatSignalsForPrompt(shared.slice(0, 6))
+  ].join("\n");
+}
+
+function isClientFacingPath(path: string): boolean {
+  return /(^|\/)(frontend|client|web|app|pages|components|views|screens|ui)(\/|$)|\.(tsx|jsx|vue|svelte|astro)$/i.test(path);
+}
+
+function isServerFacingPath(path: string): boolean {
+  return /(^|\/)(backend|server|api|routes|controllers?|services?|repositories?|entities?|models?|domain|infra)(\/|$)|\.(java|kt|go|py|rb|php|cs|rs)$/i.test(path);
+}
 
 export async function generateAnalysis(
   context: StaticContext,
@@ -58,6 +139,7 @@ async function generateQuestions(
   context: StaticContext,
   fallback: AnalysisResult
 ): Promise<Pick<AnalysisResult, "ai" | "questions">> {
+  const signals = extractCodeSignals(context.contextFiles, context.focus);
   const prompt = `Return Korean JSON only.
 Create exactly 5 repo-specific code understanding questions.
 Return a single valid JSON object. Do not include markdown fences, comments, or any text outside JSON.
@@ -67,10 +149,21 @@ Each relatedFiles array must contain exactly 1 path.
 Do not use backticks. Do not quote code. Do not list examples.
 Each question must mention one concrete file path or symbol name from the code signals.
 Prefer runtime source files over test files. Do not base questions primarily on __tests__, .test.*, or .spec.* files unless asking about testing.
+If 분석 관점 is 프론트엔드 중심, questions must focus on UI, page, component, route, client state, and frontend data flow.
+If 분석 관점 is 백엔드 중심, questions must focus on API, service, domain, persistence, auth, and server data flow.
+For 프론트엔드 중심, do not make backend, service, repository, entity, or server config files the main subject.
+For 백엔드 중심, do not make UI, page, component, CSS, or styling files the main subject.
+Use five different main files if possible. Cover at least 3 different modules or folders.
+Ask at most one question about auth, security, login, token, or permission unless the repository only contains that domain.
+Follow the question plan exactly.
 
 Repository: ${context.repo.url}
-Code signals:
-${formatSignalsForPrompt(extractCodeSignals(context.contextFiles))}
+분석 관점: ${formatFocus(context.focus)}
+Question plan:
+${buildQuestionPlan(context.focus)}
+
+Code signal candidates:
+${formatQuestionSignalBuckets(signals, context.focus)}
 
 Important files:
 ${context.contextFiles.map(formatFileForPrompt).join("\n\n")}
@@ -132,14 +225,18 @@ The top-level object must have exactly one key: "report".
 Do not quote code. Never include source code excerpts in the output.
 Every array must contain at most 4 items.
 oneLineSummary, requestFlow, and dataFlow must be under 100 Korean characters each.
+If 분석 관점 is 프론트엔드 중심, report must prioritize UI, routing, page/component structure, and client data flow.
+If 분석 관점 is 백엔드 중심, report must prioritize API, service/domain logic, persistence, auth, and server data flow.
+Do not make the opposite side the main report subject unless the selected side has no meaningful files.
 
 Repository: ${context.repo.url}
+분석 관점: ${formatFocus(context.focus)}
 File count analyzed: ${context.fileCount}
 Folder tree:
 ${context.tree.slice(0, 14).map((item) => `- ${item}`).join("\n")}
 
 Code signals:
-${formatSignalsForPrompt(extractCodeSignals(context.contextFiles).slice(0, 18))}
+${formatSignalsForPrompt(extractCodeSignals(context.contextFiles, context.focus).slice(0, 18))}
 
 Return this exact JSON shape:
 {

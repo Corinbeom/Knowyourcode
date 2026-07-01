@@ -3,6 +3,7 @@ import { generateAnalysis } from "@/lib/ai";
 import { fetchRepoFiles, parseGitHubUrl } from "@/lib/github";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
+import type { AnalysisFocus } from "@/lib/types";
 
 export const runtime = "nodejs";
 const ANALYZE_LIMIT_PER_HOUR = Number(process.env.ANALYZE_LIMIT_PER_HOUR ?? 5);
@@ -15,11 +16,12 @@ export async function POST(request: Request) {
     });
     if (rateLimited) return rateLimited;
 
-    const body = (await request.json()) as { url?: string };
+    const body = (await request.json()) as { url?: string; focus?: AnalysisFocus };
     if (!body.url) {
       return NextResponse.json({ error: "GitHub URL을 입력해주세요." }, { status: 400 });
     }
 
+    const focus = normalizeFocus(body.focus);
     const repo = parseGitHubUrl(body.url);
     const files = await fetchRepoFiles(repo);
 
@@ -30,10 +32,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const context = buildStaticContext(repo, files);
+    const context = buildStaticContext(repo, files, focus);
     const fallback = buildFallbackAnalysis(
       repo,
       files.length,
+      focus,
       context.contextFiles,
       context.tree,
       context.packageInfo
@@ -45,4 +48,9 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+function normalizeFocus(focus: AnalysisFocus | undefined): AnalysisFocus {
+  if (focus === "frontend" || focus === "backend") return focus;
+  return "balanced";
 }

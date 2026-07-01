@@ -37,11 +37,37 @@ const TEXT_EXTENSIONS = new Set([
   ".yaml",
   ".env.example",
   ".config",
-  ".toml"
+  ".toml",
+  ".java",
+  ".kt",
+  ".gradle",
+  ".properties",
+  ".xml",
+  ".py",
+  ".go",
+  ".rb",
+  ".php",
+  ".cs",
+  ".fs",
+  ".rs",
+  ".swift",
+  ".scala",
+  ".c",
+  ".h",
+  ".cpp",
+  ".hpp",
+  ".dart",
+  ".vue",
+  ".svelte",
+  ".astro",
+  ".sql",
+  ".graphql",
+  ".proto",
+  ".sh"
 ]);
 
 const MAX_FILE_SIZE = 60_000;
-const MAX_TOTAL_FILES = 80;
+const MAX_TOTAL_FILES = 1_000;
 
 export function parseGitHubUrl(input: string): RepoInfo {
   let url: URL;
@@ -121,7 +147,7 @@ function shouldIncludePath(path: string): boolean {
   if (fileName.endsWith(".min.js") || fileName.endsWith(".map")) return false;
 
   const ext = getExtension(fileName);
-  if (!TEXT_EXTENSIONS.has(ext) && !["README", "Dockerfile"].includes(fileName)) {
+  if (!TEXT_EXTENSIONS.has(ext) && !["README", "Dockerfile", "pom.xml", "build.gradle", "settings.gradle"].includes(fileName)) {
     return false;
   }
 

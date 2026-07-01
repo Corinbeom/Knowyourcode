@@ -11,6 +11,8 @@ export type SourceFile = {
   size: number;
 };
 
+export type AnalysisFocus = "balanced" | "frontend" | "backend";
+
 export type FileSummary = {
   path: string;
   reason: string;
@@ -40,6 +42,7 @@ export type AnalysisResult = {
   repo: RepoInfo;
   analyzedAt: string;
   fileCount: number;
+  focus: AnalysisFocus;
   ai: AiUsage;
   report: ProjectReport;
   questions: UnderstandingQuestion[];
