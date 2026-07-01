@@ -19,33 +19,127 @@ type StaticContext = {
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant";
-const ANALYSIS_OUTPUT_TOKENS = Number(process.env.ANALYSIS_OUTPUT_TOKENS ?? 2400);
+const ANALYSIS_OUTPUT_TOKENS = Number(process.env.ANALYSIS_OUTPUT_TOKENS ?? 2200);
 const EVALUATION_OUTPUT_TOKENS = Number(process.env.EVALUATION_OUTPUT_TOKENS ?? 1200);
 
 type ProviderResult = {
   text: string | null;
   usage: AiUsage;
+  retryable?: boolean;
 };
 
 export async function generateAnalysis(
   context: StaticContext,
   fallback: AnalysisResult
 ): Promise<AnalysisResult> {
-  const prompt = `You are KnowYourCode, an AI code understanding evaluator.
-Analyze this public GitHub repository and return Korean JSON only.
-Keep the response concise. Do not quote code. Do not include markdown.
-Every generated question must mention at least one concrete file path or symbol name from the code signals.
+  const questionsResult = await generateQuestions(context, fallback);
+  const reportResult = await generateReport(context, fallback);
+  const aiUsage = questionsResult.ai.used ? questionsResult.ai : reportResult.ai;
+
+  if (!questionsResult.ai.used && !reportResult.ai.used) {
+    return {
+      ...fallback,
+      ai: {
+        ...questionsResult.ai,
+        reason: `${questionsResult.ai.reason ?? "질문 생성 실패"} / ${reportResult.ai.reason ?? "리포트 생성 실패"}`
+      }
+    };
+  }
+
+  return {
+    ...fallback,
+    ai: aiUsage,
+    report: reportResult.report,
+    questions: questionsResult.questions
+  };
+}
+
+async function generateQuestions(
+  context: StaticContext,
+  fallback: AnalysisResult
+): Promise<Pick<AnalysisResult, "ai" | "questions">> {
+  const prompt = `Return Korean JSON only.
+Create exactly 5 repo-specific code understanding questions.
+Return a single valid JSON object. Do not include markdown fences, comments, or any text outside JSON.
+The top-level object must have exactly one key: "questions".
+Each question must be under 70 Korean characters.
+Each relatedFiles array must contain exactly 1 path.
+Do not use backticks. Do not quote code. Do not list examples.
+Each question must mention one concrete file path or symbol name from the code signals.
+Prefer runtime source files over test files. Do not base questions primarily on __tests__, .test.*, or .spec.* files unless asking about testing.
 
 Repository: ${context.repo.url}
-File count analyzed: ${context.fileCount}
-Folder tree:
-${context.tree.map((item) => `- ${item}`).join("\n")}
-
 Code signals:
 ${formatSignalsForPrompt(extractCodeSignals(context.contextFiles))}
 
 Important files:
 ${context.contextFiles.map(formatFileForPrompt).join("\n\n")}
+
+Return this exact JSON shape:
+{
+  "questions": [
+    {"id":"q1","type":"구조 이해","question":"string","relatedFiles":["string"]},
+    {"id":"q2","type":"요청 흐름","question":"string","relatedFiles":["string"]},
+    {"id":"q3","type":"데이터 흐름","question":"string","relatedFiles":["string"]},
+    {"id":"q4","type":"변경 영향도","question":"string","relatedFiles":["string"]},
+    {"id":"q5","type":"면접형","question":"string","relatedFiles":["string"]}
+  ]
+}`;
+
+  const providerResult = await callConfiguredProvider(
+    prompt,
+    900,
+    buildQuestionsResponseSchema()
+  );
+  const raw = providerResult.text;
+  if (!raw) {
+    return { ai: providerResult.usage, questions: fallback.questions };
+  }
+
+  const parsed = normalizeQuestionsPayload(parseJsonObject(raw));
+
+  if (!Array.isArray(parsed?.questions)) {
+    console.warn("[KnowYourCode] Failed to parse questions JSON", {
+      length: raw.length,
+      preview: raw.slice(0, 800),
+      tail: raw.slice(-400)
+    });
+
+    return {
+      ai: {
+        ...providerResult.usage,
+        used: false,
+        reason: "LLM 질문 JSON을 해석하지 못해 기본 질문으로 대체했습니다."
+      },
+      questions: fallback.questions
+    };
+  }
+
+  return {
+    ai: providerResult.usage,
+    questions: normalizeQuestions(parsed.questions, fallback.questions)
+  };
+}
+
+async function generateReport(
+  context: StaticContext,
+  fallback: AnalysisResult
+): Promise<Pick<AnalysisResult, "ai" | "report">> {
+  const prompt = `Return Korean JSON only.
+Create a concise project understanding report.
+Return a single valid JSON object. Do not include markdown fences, comments, or any text outside JSON.
+The top-level object must have exactly one key: "report".
+Do not quote code. Never include source code excerpts in the output.
+Every array must contain at most 4 items.
+oneLineSummary, requestFlow, and dataFlow must be under 100 Korean characters each.
+
+Repository: ${context.repo.url}
+File count analyzed: ${context.fileCount}
+Folder tree:
+${context.tree.slice(0, 14).map((item) => `- ${item}`).join("\n")}
+
+Code signals:
+${formatSignalsForPrompt(extractCodeSignals(context.contextFiles).slice(0, 18))}
 
 Return this exact JSON shape:
 {
@@ -56,54 +150,99 @@ Return this exact JSON shape:
     "coreFeatures": ["string"],
     "requestFlow": "string",
     "dataFlow": "string",
-    "keyFiles": [{"path":"string","reason":"string","excerpt":""}],
+    "keyFiles": [{"path":"string","reason":"string"}],
     "difficulty": "쉬움|보통|어려움",
     "riskyQuestions": ["string"]
-  },
-  "questions": [
-    {"id":"q1","type":"구조 이해","question":"string","relatedFiles":["string"]},
-    {"id":"q2","type":"요청 흐름","question":"string","relatedFiles":["string"]},
-    {"id":"q3","type":"데이터 흐름","question":"string","relatedFiles":["string"]},
-    {"id":"q4","type":"변경 영향도","question":"string","relatedFiles":["string"]},
-    {"id":"q5","type":"면접형","question":"string","relatedFiles":["string"]}
-  ]
+  }
 }`;
 
-  const providerResult = await callConfiguredProvider(prompt, ANALYSIS_OUTPUT_TOKENS);
+  const providerResult = await callConfiguredProvider(
+    prompt,
+    ANALYSIS_OUTPUT_TOKENS,
+    buildReportResponseSchema()
+  );
   const raw = providerResult.text;
   if (!raw) {
-    return {
-      ...fallback,
-      ai: providerResult.usage
-    };
+    return { ai: providerResult.usage, report: fallback.report };
   }
 
-  const parsed = parseJsonObject(raw) as Partial<{
-    report: ProjectReport;
-    questions: UnderstandingQuestion[];
-  }> | null;
+  const parsed = normalizeReportPayload(parseJsonObject(raw));
 
-  if (!parsed?.report || !Array.isArray(parsed.questions)) {
+  if (!parsed?.report) {
+    console.warn("[KnowYourCode] Failed to parse report JSON", {
+      length: raw.length,
+      preview: raw.slice(0, 800),
+      tail: raw.slice(-400)
+    });
+
     return {
-      ...fallback,
       ai: {
         ...providerResult.usage,
         used: false,
-        reason: "LLM 응답을 JSON 형식으로 해석하지 못해 기본 분석으로 대체했습니다."
-      }
+        reason: "LLM 리포트 JSON을 해석하지 못해 기본 리포트로 대체했습니다."
+      },
+      report: fallback.report
     };
   }
 
   return {
-    ...fallback,
     ai: providerResult.usage,
     report: {
       ...fallback.report,
       ...parsed.report,
       keyFiles: normalizeKeyFiles(parsed.report.keyFiles, fallback.contextFiles)
-    },
-    questions: normalizeQuestions(parsed.questions, fallback.questions)
+    }
   };
+}
+
+function normalizeQuestionsPayload(input: unknown): Partial<{ questions: UnderstandingQuestion[] }> | null {
+  const parsed = parseNestedJson(input);
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.questions) {
+    return record as Partial<{ questions: UnderstandingQuestion[] }>;
+  }
+
+  for (const key of ["analysis", "result", "data", "response"]) {
+    const nested = parseNestedJson(record[key]);
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const nestedRecord = nested as Record<string, unknown>;
+      if (nestedRecord.questions) {
+        return nestedRecord as Partial<{ questions: UnderstandingQuestion[] }>;
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeReportPayload(input: unknown): Partial<{ report: ProjectReport }> | null {
+  const parsed = parseNestedJson(input);
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.report) {
+    return record as Partial<{ report: ProjectReport }>;
+  }
+
+  for (const key of ["analysis", "result", "data", "response"]) {
+    const nested = parseNestedJson(record[key]);
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const nestedRecord = nested as Record<string, unknown>;
+      if (nestedRecord.report) {
+        return nestedRecord as Partial<{ report: ProjectReport }>;
+      }
+    }
+  }
+
+  return null;
 }
 
 export async function evaluateAnswer(input: {
@@ -151,7 +290,11 @@ Return this exact JSON shape:
 }
 Score must be an integer from 0 to 100.`;
 
-  const providerResult = await callConfiguredProvider(prompt, EVALUATION_OUTPUT_TOKENS);
+  const providerResult = await callConfiguredProvider(
+    prompt,
+    EVALUATION_OUTPUT_TOKENS,
+    buildEvaluationResponseSchema()
+  );
   const raw = providerResult.text;
   if (!raw) return fallback;
 
@@ -169,11 +312,27 @@ Score must be an integer from 0 to 100.`;
   };
 }
 
-async function callConfiguredProvider(prompt: string, maxOutputTokens: number): Promise<ProviderResult> {
+async function callConfiguredProvider(
+  prompt: string,
+  maxOutputTokens: number,
+  responseSchema: Record<string, unknown>
+): Promise<ProviderResult> {
   const provider = (process.env.AI_PROVIDER || "").toLowerCase();
 
   if (provider === "gemini" || (!provider && process.env.GEMINI_API_KEY)) {
-    return callGemini(prompt, maxOutputTokens);
+    const geminiResult = await callGemini(prompt, maxOutputTokens, responseSchema);
+    if (!geminiResult.text && geminiResult.retryable && process.env.GROQ_API_KEY) {
+      const groqResult = await callGroq(prompt, maxOutputTokens);
+      if (groqResult.text) return groqResult;
+      return {
+        ...geminiResult,
+        usage: {
+          ...geminiResult.usage,
+          reason: `${geminiResult.usage.reason} Groq 자동 대체 실패: ${groqResult.usage.reason}`
+        }
+      };
+    }
+    return geminiResult;
   }
 
   if (provider === "groq" || (!provider && process.env.GROQ_API_KEY)) {
@@ -201,7 +360,11 @@ async function callConfiguredProvider(prompt: string, maxOutputTokens: number): 
   };
 }
 
-async function callGemini(prompt: string, maxOutputTokens: number): Promise<ProviderResult> {
+async function callGemini(
+  prompt: string,
+  maxOutputTokens: number,
+  responseSchema: Record<string, unknown>
+): Promise<ProviderResult> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     return {
@@ -212,7 +375,7 @@ async function callGemini(prompt: string, maxOutputTokens: number): Promise<Prov
 
   try {
     const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
       {
         method: "POST",
@@ -222,15 +385,19 @@ async function callGemini(prompt: string, maxOutputTokens: number): Promise<Prov
           generationConfig: {
             temperature: 0.2,
             responseMimeType: "application/json",
+            responseSchema,
             maxOutputTokens
           }
         })
-      }
+      },
+      2
     );
 
     if (!response.ok) {
+      const retryable = isRetryableStatus(response.status);
       return {
         text: null,
+        retryable,
         usage: {
           provider: "gemini",
           used: false,
@@ -251,6 +418,7 @@ async function callGemini(prompt: string, maxOutputTokens: number): Promise<Prov
   } catch (error) {
     return {
       text: null,
+      retryable: true,
       usage: {
         provider: "gemini",
         used: false,
@@ -258,6 +426,25 @@ async function callGemini(prompt: string, maxOutputTokens: number): Promise<Prov
       }
     };
   }
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, retries: number): Promise<Response> {
+  let response = await fetch(url, init);
+
+  for (let attempt = 0; attempt < retries && isRetryableStatus(response.status); attempt += 1) {
+    await sleep(500 * (attempt + 1));
+    response = await fetch(url, init);
+  }
+
+  return response;
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function callGroq(prompt: string, maxOutputTokens: number): Promise<ProviderResult> {
@@ -323,12 +510,15 @@ function formatFileForPrompt(file: FileSummary): string {
 Reason: ${file.reason}
 Excerpt:
 \`\`\`
-${file.excerpt.slice(0, 1800)}
+${file.excerpt.slice(0, 700)}
 \`\`\``;
 }
 
 function parseJsonObject(raw: string): unknown | null {
-  const trimmed = raw.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
+  const trimmed = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "");
   try {
     return JSON.parse(trimmed);
   } catch {
@@ -342,12 +532,99 @@ function parseJsonObject(raw: string): unknown | null {
   }
 }
 
+function parseNestedJson(input: unknown): unknown | null {
+  if (typeof input !== "string") return input ?? null;
+  return parseJsonObject(input);
+}
+
+function buildQuestionsResponseSchema(): Record<string, unknown> {
+  return {
+    type: "OBJECT",
+    required: ["questions"],
+    properties: {
+      questions: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          required: ["id", "type", "question", "relatedFiles"],
+          properties: {
+            id: { type: "STRING" },
+            type: { type: "STRING", enum: ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"] },
+            question: { type: "STRING" },
+            relatedFiles: { type: "ARRAY", items: { type: "STRING" } }
+          }
+        }
+      }
+    }
+  };
+}
+
+function buildReportResponseSchema(): Record<string, unknown> {
+  return {
+    type: "OBJECT",
+    required: ["report"],
+    properties: {
+      report: {
+        type: "OBJECT",
+        required: [
+          "oneLineSummary",
+          "techStack",
+          "folderStructure",
+          "coreFeatures",
+          "requestFlow",
+          "dataFlow",
+          "keyFiles",
+          "difficulty",
+          "riskyQuestions"
+        ],
+        properties: {
+          oneLineSummary: { type: "STRING" },
+          techStack: { type: "ARRAY", items: { type: "STRING" } },
+          folderStructure: { type: "ARRAY", items: { type: "STRING" } },
+          coreFeatures: { type: "ARRAY", items: { type: "STRING" } },
+          requestFlow: { type: "STRING" },
+          dataFlow: { type: "STRING" },
+          keyFiles: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              required: ["path", "reason"],
+              properties: {
+                path: { type: "STRING" },
+                reason: { type: "STRING" }
+              }
+            }
+          },
+          difficulty: { type: "STRING", enum: ["쉬움", "보통", "어려움"] },
+          riskyQuestions: { type: "ARRAY", items: { type: "STRING" } }
+        }
+      }
+    }
+  };
+}
+
+function buildEvaluationResponseSchema(): Record<string, unknown> {
+  return {
+    type: "OBJECT",
+    required: ["score", "understood", "missing", "incorrect", "relatedFiles", "betterAnswer", "followUpQuestion"],
+    properties: {
+      score: { type: "NUMBER" },
+      understood: { type: "ARRAY", items: { type: "STRING" } },
+      missing: { type: "ARRAY", items: { type: "STRING" } },
+      incorrect: { type: "ARRAY", items: { type: "STRING" } },
+      relatedFiles: { type: "ARRAY", items: { type: "STRING" } },
+      betterAnswer: { type: "STRING" },
+      followUpQuestion: { type: "STRING" }
+    }
+  };
+}
+
 function normalizeKeyFiles(input: FileSummary[] | undefined, fallback: FileSummary[]): FileSummary[] {
   if (!Array.isArray(input) || !input.length) return fallback.slice(0, 6);
   return input.slice(0, 8).map((file) => ({
     path: file.path || "unknown",
     reason: file.reason || "핵심 파일",
-    excerpt: file.excerpt || ""
+    excerpt: fallback.find((fallbackFile) => fallbackFile.path === file.path)?.excerpt || ""
   }));
 }
 
@@ -370,7 +647,7 @@ function normalizeQuestions(
 function normalizeRelatedFiles(input: unknown, fallbackFiles: string[]): string[] {
   if (!Array.isArray(input)) return fallbackFiles.slice(0, 3);
   const files = input.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-  return files.length ? files.slice(0, 5) : fallbackFiles.slice(0, 3);
+  return files.length ? files.slice(0, 2) : fallbackFiles.slice(0, 2);
 }
 
 function pickRelatedFiles(files: FileSummary[], relatedPaths: string[], searchText: string): FileSummary[] {
