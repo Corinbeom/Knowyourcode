@@ -1,4 +1,4 @@
-import type { AnalysisFocus, AnalysisResult, FileSummary, RepoInfo, SourceFile } from "./types";
+import type { AnalysisFocus, AnalysisResult, FileSummary, QuestionLevel, RepoInfo, SourceFile } from "./types";
 import { extractCodeSignals } from "./code-signals";
 
 const PRIORITY_PATTERNS = [
@@ -16,6 +16,7 @@ export function buildStaticContext(
   repo: RepoInfo,
   files: SourceFile[],
   focus: AnalysisFocus = "balanced",
+  questionLevel: QuestionLevel = "standard",
   questionTargets: string[] = []
 ) {
   const selectedFiles = selectContextFiles(files, focus, questionTargets);
@@ -26,6 +27,7 @@ export function buildStaticContext(
   return {
     repo,
     focus,
+    questionLevel,
     questionTargets,
     fileCount: files.length,
     contextFiles,
@@ -38,6 +40,7 @@ export function buildFallbackAnalysis(
   repo: RepoInfo,
   fileCount: number,
   focus: AnalysisFocus,
+  questionLevel: QuestionLevel,
   questionTargets: string[],
   contextFiles: FileSummary[],
   tree: string[],
@@ -58,6 +61,7 @@ export function buildFallbackAnalysis(
     analyzedAt: new Date().toISOString(),
     fileCount,
     focus,
+    questionLevel,
     questionTargets,
     ai: {
       provider: "fallback",

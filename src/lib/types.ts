@@ -12,6 +12,7 @@ export type SourceFile = {
 };
 
 export type AnalysisFocus = "balanced" | "frontend" | "backend";
+export type QuestionLevel = "basic" | "standard" | "deep";
 
 export type FileSummary = {
   path: string;
@@ -43,6 +44,7 @@ export type AnalysisResult = {
   analyzedAt: string;
   fileCount: number;
   focus: AnalysisFocus;
+  questionLevel: QuestionLevel;
   questionTargets: string[];
   ai: AiUsage;
   report: ProjectReport;

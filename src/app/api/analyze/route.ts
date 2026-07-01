@@ -3,7 +3,7 @@ import { generateAnalysis } from "@/lib/ai";
 import { fetchRepoFiles, parseGitHubUrl } from "@/lib/github";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
-import type { AnalysisFocus } from "@/lib/types";
+import type { AnalysisFocus, QuestionLevel } from "@/lib/types";
 
 export const runtime = "nodejs";
 const ANALYZE_LIMIT_PER_HOUR = Number(process.env.ANALYZE_LIMIT_PER_HOUR ?? 5);
@@ -19,6 +19,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       url?: string;
       focus?: AnalysisFocus;
+      questionLevel?: QuestionLevel;
       questionTargets?: string[] | string;
     };
     if (!body.url) {
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
     }
 
     const focus = normalizeFocus(body.focus);
+    const questionLevel = normalizeQuestionLevel(body.questionLevel);
     const questionTargets = normalizeQuestionTargets(body.questionTargets);
     const repo = parseGitHubUrl(body.url);
     const files = await fetchRepoFiles(repo);
@@ -37,11 +39,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const context = buildStaticContext(repo, files, focus, questionTargets);
+    const context = buildStaticContext(repo, files, focus, questionLevel, questionTargets);
     const fallback = buildFallbackAnalysis(
       repo,
       files.length,
       focus,
+      questionLevel,
       questionTargets,
       context.contextFiles,
       context.tree,
@@ -64,6 +67,11 @@ export async function POST(request: Request) {
 function normalizeFocus(focus: AnalysisFocus | undefined): AnalysisFocus {
   if (focus === "frontend" || focus === "backend") return focus;
   return "balanced";
+}
+
+function normalizeQuestionLevel(questionLevel: QuestionLevel | undefined): QuestionLevel {
+  if (questionLevel === "basic" || questionLevel === "deep") return questionLevel;
+  return "standard";
 }
 
 function normalizeQuestionTargets(input: string[] | string | undefined): string[] {

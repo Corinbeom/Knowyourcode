@@ -5,6 +5,7 @@ import type {
   EvaluationResult,
   FileSummary,
   ProjectReport,
+  QuestionLevel,
   RepoInfo,
   UnderstandingQuestion
 } from "./types";
@@ -13,6 +14,7 @@ import { extractCodeSignals, formatSignalsForPrompt, type CodeSignal } from "./c
 type StaticContext = {
   repo: RepoInfo;
   focus: AnalysisFocus;
+  questionLevel: QuestionLevel;
   questionTargets: string[];
   fileCount: number;
   contextFiles: FileSummary[];
@@ -70,6 +72,37 @@ function buildQuestionPlan(focus: AnalysisFocus): string {
 
 function formatQuestionTargets(questionTargets: string[]): string {
   return questionTargets.length ? questionTargets.join(", ") : "전체 기능";
+}
+
+function formatQuestionLevel(questionLevel: QuestionLevel): string {
+  if (questionLevel === "basic") return "기초";
+  if (questionLevel === "deep") return "심화";
+  return "보통";
+}
+
+function buildQuestionLevelGuide(questionLevel: QuestionLevel): string {
+  if (questionLevel === "basic") {
+    return [
+      "- Ask approachable questions for users who are still learning their own code.",
+      "- Prefer file role, entry point, simple request/API call, state/data source, and one small change impact.",
+      "- Avoid architecture tradeoff, operations risk, transaction, security deep-dive, and abstract design questions.",
+      "- The user should be able to answer by reading one or two related files."
+    ].join("\n");
+  }
+
+  if (questionLevel === "deep") {
+    return [
+      "- Ask interview/review-level questions that require connecting multiple files or layers.",
+      "- Include design intent, change impact, exception handling, coupling, security, performance, or operational risk when code evidence exists.",
+      "- The question can be challenging, but it must still point to concrete files or symbols."
+    ].join("\n");
+  }
+
+  return [
+    "- Ask practical junior-to-mid level questions.",
+    "- Mix direct code-reading questions with one change-impact or interview-style question.",
+    "- Avoid making every question an architecture or risk question."
+  ].join("\n");
 }
 
 function formatQuestionSignalBuckets(signals: CodeSignal[], focus: AnalysisFocus): string {
@@ -165,10 +198,15 @@ Ask at most one question about auth, security, login, token, or permission unles
 Follow the question plan exactly.
 If 관심 기능 is not 전체 기능, prioritize those features when choosing files and questions.
 Do not invent files or behavior just to match 관심 기능. If matching code is weak, ask about the closest concrete files.
+Adjust question difficulty according to 질문 난이도.
 
 Repository: ${context.repo.url}
 분석 관점: ${formatFocus(context.focus)}
+질문 난이도: ${formatQuestionLevel(context.questionLevel)}
 관심 기능: ${formatQuestionTargets(context.questionTargets)}
+Difficulty guide:
+${buildQuestionLevelGuide(context.questionLevel)}
+
 Question plan:
 ${buildQuestionPlan(context.focus)}
 

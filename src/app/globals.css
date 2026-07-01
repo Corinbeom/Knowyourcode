@@ -182,7 +182,8 @@ p {
   overflow: hidden;
 }
 
-.focus-control {
+.focus-control,
+.level-control {
   margin: 0 0 8px;
   padding: 0;
   border: 0;
@@ -191,7 +192,8 @@ p {
   gap: 8px;
 }
 
-.focus-control legend {
+.focus-control legend,
+.level-control legend {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -487,6 +489,7 @@ textarea::placeholder {
 .score-chip,
 .ai-chip,
 .focus-chip,
+.level-chip,
 .target-chip,
 .risk-chip {
   border-radius: 6px;
@@ -507,6 +510,12 @@ textarea::placeholder {
   border-color: rgba(167, 139, 250, 0.3);
   background: rgba(167, 139, 250, 0.08);
   color: var(--secondary);
+}
+
+.level-chip {
+  border-color: rgba(52, 211, 153, 0.26);
+  background: rgba(52, 211, 153, 0.08);
+  color: var(--success);
 }
 
 .target-chip {
@@ -1028,7 +1037,8 @@ textarea:focus,
     grid-template-columns: 1fr;
   }
 
-  .focus-control {
+  .focus-control,
+  .level-control {
     grid-template-columns: 1fr;
   }
 

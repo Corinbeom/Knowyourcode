@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { AnalysisFocus, AnalysisResult, EvaluationResult, UnderstandingQuestion } from "@/lib/types";
+import type { AnalysisFocus, AnalysisResult, EvaluationResult, QuestionLevel, UnderstandingQuestion } from "@/lib/types";
 
 type AnalyzeState = "idle" | "loading" | "ready" | "error";
 type EvaluateState = "idle" | "loading" | "ready" | "error";
@@ -47,6 +47,7 @@ const ANALYSIS_STEPS = [
 export default function Home() {
   const [repoUrl, setRepoUrl] = useState("");
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("balanced");
+  const [questionLevel, setQuestionLevel] = useState<QuestionLevel>("standard");
   const [questionTargets, setQuestionTargets] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string>("");
@@ -87,7 +88,7 @@ export default function Home() {
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: repoUrl, focus: analysisFocus, questionTargets })
+      body: JSON.stringify({ url: repoUrl, focus: analysisFocus, questionLevel, questionTargets })
     });
     const data = await response.json();
     setUsageLimits((current) => ({ ...current, ...data.limits, analyze: data.limit ?? data.limits?.analyze ?? current.analyze }));
@@ -183,6 +184,30 @@ export default function Home() {
                   value="backend"
                   selected={analysisFocus}
                   onChange={setAnalysisFocus}
+                />
+              </fieldset>
+              <fieldset className="level-control">
+                <legend>질문 난이도</legend>
+                <LevelOption
+                  label="기초"
+                  description="파일 역할과 기본 흐름부터 봅니다."
+                  value="basic"
+                  selected={questionLevel}
+                  onChange={setQuestionLevel}
+                />
+                <LevelOption
+                  label="보통"
+                  description="코드 흐름과 수정 영향을 함께 봅니다."
+                  value="standard"
+                  selected={questionLevel}
+                  onChange={setQuestionLevel}
+                />
+                <LevelOption
+                  label="심화"
+                  description="설계 의도와 운영 리스크까지 묻습니다."
+                  value="deep"
+                  selected={questionLevel}
+                  onChange={setQuestionLevel}
                 />
               </fieldset>
               <div className="target-field">
@@ -332,6 +357,36 @@ function FocusOption({
   );
 }
 
+function LevelOption({
+  label,
+  description,
+  value,
+  selected,
+  onChange
+}: {
+  label: string;
+  description: string;
+  value: QuestionLevel;
+  selected: QuestionLevel;
+  onChange: (value: QuestionLevel) => void;
+}) {
+  return (
+    <label className={selected === value ? "focus-option is-selected" : "focus-option"}>
+      <input
+        type="radio"
+        name="questionLevel"
+        value={value}
+        checked={selected === value}
+        onChange={() => onChange(value)}
+      />
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+    </label>
+  );
+}
+
 function AnalysisProgress({
   state,
   activeStep
@@ -443,6 +498,7 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
         </div>
         <div className="report__badges">
           <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
+          <div className="level-chip">{formatQuestionLevelLabel(analysis.questionLevel)}</div>
           {analysis.questionTargets.length ? (
             <div className="target-chip">{analysis.questionTargets.join(", ")}</div>
           ) : null}
@@ -489,6 +545,12 @@ function formatFocusLabel(focus: AnalysisFocus): string {
   if (focus === "frontend") return "프론트엔드 중심";
   if (focus === "backend") return "백엔드 중심";
   return "전체 균형";
+}
+
+function formatQuestionLevelLabel(questionLevel: QuestionLevel): string {
+  if (questionLevel === "basic") return "난이도 기초";
+  if (questionLevel === "deep") return "난이도 심화";
+  return "난이도 보통";
 }
 
 function QuestionPanel({
