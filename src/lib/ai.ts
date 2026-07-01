@@ -7,6 +7,7 @@ import type {
   RepoInfo,
   UnderstandingQuestion
 } from "./types";
+import { extractCodeSignals, formatSignalsForPrompt } from "./code-signals";
 
 type StaticContext = {
   repo: RepoInfo;
@@ -33,11 +34,15 @@ export async function generateAnalysis(
   const prompt = `You are KnowYourCode, an AI code understanding evaluator.
 Analyze this public GitHub repository and return Korean JSON only.
 Keep the response concise. Do not quote code. Do not include markdown.
+Every generated question must mention at least one concrete file path or symbol name from the code signals.
 
 Repository: ${context.repo.url}
 File count analyzed: ${context.fileCount}
 Folder tree:
 ${context.tree.map((item) => `- ${item}`).join("\n")}
+
+Code signals:
+${formatSignalsForPrompt(extractCodeSignals(context.contextFiles))}
 
 Important files:
 ${context.contextFiles.map(formatFileForPrompt).join("\n\n")}
@@ -348,12 +353,20 @@ function normalizeQuestions(
 ): UnderstandingQuestion[] {
   if (!Array.isArray(input) || input.length < 5) return fallback;
   const allowedTypes = new Set(["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"]);
+  const fallbackFiles = fallback.flatMap((question) => question.relatedFiles);
+
   return input.slice(0, 5).map((question, index) => ({
     id: question.id || `q${index + 1}`,
     type: allowedTypes.has(question.type) ? question.type : fallback[index]?.type ?? "구조 이해",
     question: question.question || fallback[index]?.question || "프로젝트 구조를 설명해주세요.",
-    relatedFiles: Array.isArray(question.relatedFiles) ? question.relatedFiles : []
+    relatedFiles: normalizeRelatedFiles(question.relatedFiles, fallbackFiles)
   }));
+}
+
+function normalizeRelatedFiles(input: unknown, fallbackFiles: string[]): string[] {
+  if (!Array.isArray(input)) return fallbackFiles.slice(0, 3);
+  const files = input.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return files.length ? files.slice(0, 5) : fallbackFiles.slice(0, 3);
 }
 
 function pickRelatedFiles(files: FileSummary[], relatedPaths: string[]): FileSummary[] {

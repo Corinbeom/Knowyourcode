@@ -1,4 +1,5 @@
 import type { AnalysisResult, FileSummary, RepoInfo, SourceFile } from "./types";
+import { extractCodeSignals } from "./code-signals";
 
 const PRIORITY_PATTERNS = [
   /README/i,
@@ -31,6 +32,13 @@ export function buildFallbackAnalysis(
 ): AnalysisResult {
   const stack = inferStack(packageInfo, contextFiles);
   const keyFiles = contextFiles.slice(0, 6);
+  const signals = extractCodeSignals(contextFiles);
+  const primarySignal = signals[0];
+  const secondarySignal = signals[1] ?? primarySignal;
+  const tertiarySignal = signals[2] ?? secondarySignal;
+  const primaryFile = primarySignal?.path ?? keyFiles[0]?.path ?? "핵심 파일";
+  const secondaryFile = secondarySignal?.path ?? keyFiles[1]?.path ?? primaryFile;
+  const tertiaryFile = tertiarySignal?.path ?? keyFiles[2]?.path ?? secondaryFile;
 
   return {
     repo,
@@ -61,32 +69,32 @@ export function buildFallbackAnalysis(
       {
         id: "q1",
         type: "구조 이해",
-        question: "이 프로젝트의 실행 진입점과 주요 폴더 역할을 설명해주세요.",
-        relatedFiles: keyFiles.map((file) => file.path).slice(0, 3)
+        question: `${primaryFile}의 역할을 기준으로 이 프로젝트의 실행 진입점과 주요 폴더 구조를 설명해주세요.`,
+        relatedFiles: [primaryFile, secondaryFile, tertiaryFile]
       },
       {
         id: "q2",
         type: "요청 흐름",
-        question: "사용자 요청이 들어왔을 때 어떤 파일들을 거쳐 처리될 가능성이 높은가요?",
-        relatedFiles: keyFiles.map((file) => file.path).slice(0, 3)
+        question: `${secondaryFile}에서 시작되는 요청 또는 화면 흐름이 어떤 파일들과 연결되는지 설명해주세요.`,
+        relatedFiles: [secondaryFile, primaryFile, tertiaryFile]
       },
       {
         id: "q3",
         type: "데이터 흐름",
-        question: "외부 API, DB, 상태 관리 등 데이터가 이동하는 지점을 어디에서 확인할 수 있나요?",
-        relatedFiles: keyFiles.map((file) => file.path).slice(0, 3)
+        question: `${tertiaryFile}를 보면 데이터가 어디에서 들어오고 어디로 전달되는지 어떻게 추론할 수 있나요?`,
+        relatedFiles: [tertiaryFile, primaryFile, secondaryFile]
       },
       {
         id: "q4",
         type: "변경 영향도",
-        question: "핵심 기능 하나를 수정한다면 어떤 파일들을 함께 확인해야 하나요?",
-        relatedFiles: keyFiles.map((file) => file.path).slice(0, 4)
+        question: `${primaryFile}의 동작을 수정한다면 ${secondaryFile}와 함께 어떤 영향 범위를 확인해야 하나요?`,
+        relatedFiles: [primaryFile, secondaryFile, tertiaryFile]
       },
       {
         id: "q5",
         type: "면접형",
-        question: "이 프로젝트를 면접에서 1분 안에 설명한다면 어떤 구조와 의도를 강조하겠습니까?",
-        relatedFiles: keyFiles.map((file) => file.path).slice(0, 2)
+        question: `면접에서 ${primaryFile}와 ${secondaryFile}를 근거로 이 프로젝트의 핵심 구조를 어떻게 설명하겠습니까?`,
+        relatedFiles: [primaryFile, secondaryFile]
       }
     ]
   };
