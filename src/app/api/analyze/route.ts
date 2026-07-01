@@ -16,12 +16,17 @@ export async function POST(request: Request) {
     });
     if (rateLimited) return rateLimited;
 
-    const body = (await request.json()) as { url?: string; focus?: AnalysisFocus };
+    const body = (await request.json()) as {
+      url?: string;
+      focus?: AnalysisFocus;
+      questionTargets?: string[] | string;
+    };
     if (!body.url) {
       return NextResponse.json({ error: "GitHub URL을 입력해주세요." }, { status: 400 });
     }
 
     const focus = normalizeFocus(body.focus);
+    const questionTargets = normalizeQuestionTargets(body.questionTargets);
     const repo = parseGitHubUrl(body.url);
     const files = await fetchRepoFiles(repo);
 
@@ -32,11 +37,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const context = buildStaticContext(repo, files, focus);
+    const context = buildStaticContext(repo, files, focus, questionTargets);
     const fallback = buildFallbackAnalysis(
       repo,
       files.length,
       focus,
+      questionTargets,
       context.contextFiles,
       context.tree,
       context.packageInfo
@@ -53,4 +59,14 @@ export async function POST(request: Request) {
 function normalizeFocus(focus: AnalysisFocus | undefined): AnalysisFocus {
   if (focus === "frontend" || focus === "backend") return focus;
   return "balanced";
+}
+
+function normalizeQuestionTargets(input: string[] | string | undefined): string[] {
+  const rawTargets = Array.isArray(input) ? input : (input ?? "").split(/[,;\n]/);
+  return rawTargets
+    .map((target) => target.trim())
+    .filter(Boolean)
+    .map((target) => target.slice(0, 32))
+    .filter((target, index, targets) => targets.indexOf(target) === index)
+    .slice(0, 5);
 }

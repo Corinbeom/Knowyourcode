@@ -8,8 +8,13 @@ const PRIORITY_PATTERNS = [
   /(route|router|controller|service|repository|entity|model|schema|store|auth|config)/i
 ];
 
-export function buildStaticContext(repo: RepoInfo, files: SourceFile[], focus: AnalysisFocus = "balanced") {
-  const selectedFiles = selectContextFiles(files, focus);
+export function buildStaticContext(
+  repo: RepoInfo,
+  files: SourceFile[],
+  focus: AnalysisFocus = "balanced",
+  questionTargets: string[] = []
+) {
+  const selectedFiles = selectContextFiles(files, focus, questionTargets);
   const contextFiles = selectedFiles.map(toFileSummary);
   const tree = summarizeTree(files);
   const packageJson = files.find((file) => file.path === "package.json");
@@ -17,6 +22,7 @@ export function buildStaticContext(repo: RepoInfo, files: SourceFile[], focus: A
   return {
     repo,
     focus,
+    questionTargets,
     fileCount: files.length,
     contextFiles,
     tree,
@@ -28,6 +34,7 @@ export function buildFallbackAnalysis(
   repo: RepoInfo,
   fileCount: number,
   focus: AnalysisFocus,
+  questionTargets: string[],
   contextFiles: FileSummary[],
   tree: string[],
   packageInfo: Record<string, unknown> | null
@@ -47,6 +54,7 @@ export function buildFallbackAnalysis(
     analyzedAt: new Date().toISOString(),
     fileCount,
     focus,
+    questionTargets,
     ai: {
       provider: "fallback",
       used: false,
@@ -103,12 +111,12 @@ export function buildFallbackAnalysis(
   };
 }
 
-function rankFiles(files: SourceFile[], focus: AnalysisFocus): SourceFile[] {
-  return [...files].sort((a, b) => scoreFile(b.path, focus) - scoreFile(a.path, focus));
+function rankFiles(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[] = []): SourceFile[] {
+  return [...files].sort((a, b) => scoreFile(b, focus, questionTargets) - scoreFile(a, focus, questionTargets));
 }
 
-function selectContextFiles(files: SourceFile[], focus: AnalysisFocus): SourceFile[] {
-  const runtimeCandidates = rankFiles(files.filter((file) => !isTestFile(file.path)), focus);
+function selectContextFiles(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[]): SourceFile[] {
+  const runtimeCandidates = rankFiles(files.filter((file) => !isTestFile(file.path)), focus, questionTargets);
 
   if (focus === "balanced") {
     const frontendFiles = runtimeCandidates.filter((file) => isClientFacingFile(file.path)).slice(0, 5);
@@ -117,7 +125,7 @@ function selectContextFiles(files: SourceFile[], focus: AnalysisFocus): SourceFi
       .filter((file) => !frontendFiles.includes(file) && !backendFiles.includes(file))
       .filter((file) => !isClientFacingFile(file.path) && !isServerFacingFile(file.path))
       .slice(0, 4);
-    const supportFiles = rankFiles(files.filter((file) => isTestFile(file.path)), focus).slice(0, 1);
+    const supportFiles = rankFiles(files.filter((file) => isTestFile(file.path)), focus, questionTargets).slice(0, 1);
     return [...frontendFiles, ...backendFiles, ...sharedFiles, ...supportFiles].slice(0, 15);
   }
 
@@ -131,7 +139,8 @@ function selectContextFiles(files: SourceFile[], focus: AnalysisFocus): SourceFi
   return [...primaryFiles, ...complementFiles].slice(0, 15);
 }
 
-function scoreFile(path: string, focus: AnalysisFocus): number {
+function scoreFile(file: SourceFile, focus: AnalysisFocus, questionTargets: string[]): number {
+  const path = file.path;
   let score = 0;
   for (const pattern of PRIORITY_PATTERNS) {
     if (pattern.test(path)) score += 10;
@@ -143,8 +152,54 @@ function scoreFile(path: string, focus: AnalysisFocus): number {
   if (isConfigFile(path)) score += 10;
   if (isUiFile(path)) score += 10;
   if (matchesFocus(path, focus)) score += 18;
+  score += scoreQuestionTargetMatch(file, questionTargets);
   if (isTestFile(path)) score -= 35;
   return score;
+}
+
+function scoreQuestionTargetMatch(file: SourceFile, questionTargets: string[]): number {
+  if (!questionTargets.length) return 0;
+
+  const haystack = `${file.path}\n${file.content.slice(0, 4_000)}`.toLowerCase();
+  let score = 0;
+
+  for (const term of expandQuestionTargetTerms(questionTargets)) {
+    if (!term) continue;
+    if (file.path.toLowerCase().includes(term)) score += 22;
+    if (haystack.includes(term)) score += 12;
+  }
+
+  return Math.min(score, 60);
+}
+
+function expandQuestionTargetTerms(questionTargets: string[]): string[] {
+  const terms = new Set<string>();
+
+  for (const target of questionTargets) {
+    const normalized = target.toLowerCase();
+    terms.add(normalized);
+    for (const token of normalized.split(/[\s/_-]+/)) {
+      if (token.length >= 2) terms.add(token);
+    }
+
+    if (/로그인|인증|회원|계정|권한|보안/.test(target)) {
+      ["auth", "login", "user", "account", "token", "security", "permission"].forEach((term) => terms.add(term));
+    }
+    if (/ai|면접|질문|어시스턴트|assistant/i.test(target)) {
+      ["ai", "interview", "question", "assistant", "gemini", "llm"].forEach((term) => terms.add(term));
+    }
+    if (/이력서|자소서|포트폴리오|resume/i.test(target)) {
+      ["resume", "portfolio", "profile", "cover"].forEach((term) => terms.add(term));
+    }
+    if (/지원|공고|채용|application|tracker/i.test(target)) {
+      ["application", "tracker", "job", "posting", "recruit"].forEach((term) => terms.add(term));
+    }
+    if (/퀴즈|cs|문제|quiz/i.test(target)) {
+      ["quiz", "cs", "problem", "question"].forEach((term) => terms.add(term));
+    }
+  }
+
+  return [...terms];
 }
 
 function matchesFocus(path: string, focus: AnalysisFocus): boolean {

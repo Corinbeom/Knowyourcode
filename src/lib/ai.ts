@@ -13,6 +13,7 @@ import { extractCodeSignals, formatSignalsForPrompt, type CodeSignal } from "./c
 type StaticContext = {
   repo: RepoInfo;
   focus: AnalysisFocus;
+  questionTargets: string[];
   fileCount: number;
   contextFiles: FileSummary[];
   tree: string[];
@@ -64,6 +65,10 @@ function buildQuestionPlan(focus: AnalysisFocus): string {
     "- q4 변경 영향도: 한 기능 변경 시 frontend와 backend 중 다른 계층 영향",
     "- q5 면접형: auth/security가 아닌 다른 핵심 도메인이나 운영 리스크"
   ].join("\n");
+}
+
+function formatQuestionTargets(questionTargets: string[]): string {
+  return questionTargets.length ? questionTargets.join(", ") : "전체 기능";
 }
 
 function formatQuestionSignalBuckets(signals: CodeSignal[], focus: AnalysisFocus): string {
@@ -156,9 +161,12 @@ For 백엔드 중심, do not make UI, page, component, CSS, or styling files the
 Use five different main files if possible. Cover at least 3 different modules or folders.
 Ask at most one question about auth, security, login, token, or permission unless the repository only contains that domain.
 Follow the question plan exactly.
+If 관심 기능 is not 전체 기능, prioritize those features when choosing files and questions.
+Do not invent files or behavior just to match 관심 기능. If matching code is weak, ask about the closest concrete files.
 
 Repository: ${context.repo.url}
 분석 관점: ${formatFocus(context.focus)}
+관심 기능: ${formatQuestionTargets(context.questionTargets)}
 Question plan:
 ${buildQuestionPlan(context.focus)}
 
@@ -228,9 +236,11 @@ oneLineSummary, requestFlow, and dataFlow must be under 100 Korean characters ea
 If 분석 관점 is 프론트엔드 중심, report must prioritize UI, routing, page/component structure, and client data flow.
 If 분석 관점 is 백엔드 중심, report must prioritize API, service/domain logic, persistence, auth, and server data flow.
 Do not make the opposite side the main report subject unless the selected side has no meaningful files.
+If 관심 기능 is not 전체 기능, mention those features only when there is code evidence in the provided files.
 
 Repository: ${context.repo.url}
 분석 관점: ${formatFocus(context.focus)}
+관심 기능: ${formatQuestionTargets(context.questionTargets)}
 File count analyzed: ${context.fileCount}
 Folder tree:
 ${context.tree.slice(0, 14).map((item) => `- ${item}`).join("\n")}

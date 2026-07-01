@@ -236,6 +236,36 @@ p {
   background: rgba(56, 189, 248, 0.08);
 }
 
+.target-field {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(11, 15, 20, 0.42);
+}
+
+.target-field label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.repo-form .target-field input {
+  min-height: 34px;
+  font-family: Inter, Pretendard, Arial, Helvetica, sans-serif;
+  font-size: 13px;
+}
+
+.target-field span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .repo-form__row {
   display: grid;
   grid-template-columns: 1fr 178px;
@@ -457,6 +487,7 @@ textarea::placeholder {
 .score-chip,
 .ai-chip,
 .focus-chip,
+.target-chip,
 .risk-chip {
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -476,6 +507,16 @@ textarea::placeholder {
   border-color: rgba(167, 139, 250, 0.3);
   background: rgba(167, 139, 250, 0.08);
   color: var(--secondary);
+}
+
+.target-chip {
+  max-width: 260px;
+  overflow: hidden;
+  border-color: rgba(56, 189, 248, 0.26);
+  background: rgba(56, 189, 248, 0.08);
+  color: var(--primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tag.danger {

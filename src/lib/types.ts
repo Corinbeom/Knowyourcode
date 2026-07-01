@@ -43,6 +43,7 @@ export type AnalysisResult = {
   analyzedAt: string;
   fileCount: number;
   focus: AnalysisFocus;
+  questionTargets: string[];
   ai: AiUsage;
   report: ProjectReport;
   questions: UnderstandingQuestion[];

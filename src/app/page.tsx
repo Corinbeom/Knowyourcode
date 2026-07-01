@@ -37,6 +37,7 @@ const ANALYSIS_STEPS = [
 export default function Home() {
   const [repoUrl, setRepoUrl] = useState("");
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("balanced");
+  const [questionTargets, setQuestionTargets] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string>("");
   const [answer, setAnswer] = useState("");
@@ -75,7 +76,7 @@ export default function Home() {
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: repoUrl, focus: analysisFocus })
+      body: JSON.stringify({ url: repoUrl, focus: analysisFocus, questionTargets })
     });
     const data = await response.json();
 
@@ -171,6 +172,17 @@ export default function Home() {
                   onChange={setAnalysisFocus}
                 />
               </fieldset>
+              <div className="target-field">
+                <label htmlFor="questionTargets">관심 기능</label>
+                <input
+                  id="questionTargets"
+                  value={questionTargets}
+                  onChange={(event) => setQuestionTargets(event.target.value)}
+                  placeholder="예: 로그인, AI 면접, 지원 현황"
+                  disabled={analyzeState === "loading"}
+                />
+                <span>비워두면 저장소 전체 기능을 기준으로 질문을 만듭니다.</span>
+              </div>
               <div className="repo-form__row">
                 <div className="repo-input-wrap">
                   <span>github</span>
@@ -395,6 +407,9 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
         </div>
         <div className="report__badges">
           <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
+          {analysis.questionTargets.length ? (
+            <div className="target-chip">{analysis.questionTargets.join(", ")}</div>
+          ) : null}
           <div className="score-chip">난이도 {report.difficulty}</div>
           <div className={analysis.ai.used ? "ai-chip is-live" : "ai-chip"}>
             {analysis.ai.used ? `${analysis.ai.provider} 분석` : "기본 분석"}
