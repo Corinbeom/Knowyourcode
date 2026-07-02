@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { track } from "@vercel/analytics";
 import { DEFAULT_QUESTION_TYPES, saveAnalysisSetup } from "@/lib/analysis-session";
 
 const CORE_QUESTIONS = [
@@ -111,6 +112,7 @@ export default function Home() {
   function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!repoUrl.trim()) return;
+    track("repo_submitted", { source: "landing" });
 
     saveAnalysisSetup({
       url: repoUrl.trim(),
@@ -122,11 +124,14 @@ export default function Home() {
     router.push("/setup");
   }
 
+  function openFloatingCta(source: string) {
+    track("landing_cta_opened", { source });
+    setIsFloatingCtaOpen(true);
+  }
+
   return (
     <main>
-      <SiteNav onStartClick={() => {
-        setIsFloatingCtaOpen(true);
-      }} />
+      <SiteNav onStartClick={() => openFloatingCta("nav")} />
       <section className="hero landing-hero" id="start">
         <div className="hero__inner">
           <div>
@@ -141,9 +146,7 @@ export default function Home() {
               당신이 프로젝트를 진짜 이해하고 있는지 확인해주는 AI 코드 이해도 테스트입니다.
             </p>
             <div className="hero-actions">
-              <button className="primary-button" type="button" onClick={() => {
-                setIsFloatingCtaOpen(true);
-              }}>
+              <button className="primary-button" type="button" onClick={() => openFloatingCta("hero")}>
                 내 코드 이해도 테스트하기
               </button>
               <a className="secondary-link-button" href="#interactive-preview">
@@ -210,9 +213,7 @@ export default function Home() {
             <p className="section-label">바로 시작하기</p>
             <h3>내 GitHub 저장소로 이해도 테스트를 시작하세요.</h3>
           </div>
-          <button className="primary-button" type="button" onClick={() => {
-            setIsFloatingCtaOpen(true);
-          }}>
+          <button className="primary-button" type="button" onClick={() => openFloatingCta("inline")}>
             GitHub URL 입력하기 →
           </button>
         </div>
@@ -333,9 +334,7 @@ export default function Home() {
           <p>KnowYourCode helps you understand what you built.</p>
           <strong>AI가 만든 코드, 이제 진짜 내 코드로 만드세요.</strong>
         </div>
-        <button className="primary-button" type="button" onClick={() => {
-          setIsFloatingCtaOpen(true);
-        }}>
+        <button className="primary-button" type="button" onClick={() => openFloatingCta("final")}>
           GitHub 저장소로 이해도 테스트 시작하기
         </button>
       </section>
@@ -345,7 +344,7 @@ export default function Home() {
         setRepoUrl={setRepoUrl}
         onSubmit={handleStart}
         isOpen={isFloatingCtaOpen}
-        onOpen={() => setIsFloatingCtaOpen(true)}
+        onOpen={() => openFloatingCta("floating")}
         onClose={() => {
           setIsFloatingCtaOpen(false);
         }}
@@ -362,7 +361,7 @@ function FeedbackCta() {
         <h2>KnowYourCode를 더 정확한 코드 이해도 테스트로 만들고 있습니다.</h2>
         <p>서비스를 사용해본 뒤 분석 결과, 질문, 피드백 품질에 대한 의견을 남겨주세요.</p>
       </div>
-      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer">
+      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "landing" })}>
         피드백 남기기
       </a>
     </section>

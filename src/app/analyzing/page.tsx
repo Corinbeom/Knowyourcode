@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { track } from "@vercel/analytics";
 import { loadAnalysisSetup, saveAnalysisResult, type AnalysisSetup } from "@/lib/analysis-session";
 
 const ANALYSIS_STEPS = [
@@ -77,6 +78,10 @@ export default function AnalyzingPage() {
       }
 
       saveAnalysisResult(data.analysis);
+      track("analysis_completed", {
+        focus: setup?.focus ?? "balanced",
+        questionLevel: setup?.questionLevel ?? "standard"
+      });
       window.clearInterval(interval);
       router.push("/quiz");
     }

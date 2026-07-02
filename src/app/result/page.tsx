@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { track } from "@vercel/analytics";
 import { loadAnalysisResult, loadQuizSession } from "@/lib/analysis-session";
 import type { AnalysisFocus, AnalysisResult, QuestionEvaluation, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
 
@@ -30,6 +31,7 @@ export default function ResultPage() {
     setAnalysis(storedAnalysis);
     setAnswers(storedQuiz.answers);
     setEvaluation(storedQuiz.evaluation);
+    track("result_viewed", { averageScore: storedQuiz.evaluation.averageScore });
   }, [router]);
 
   const answerMap = useMemo(
@@ -83,7 +85,7 @@ function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; eva
 
 function FloatingFeedbackButton() {
   return (
-    <a className="floating-feedback-button" href={FEEDBACK_URL} target="_blank" rel="noreferrer">
+    <a className="floating-feedback-button" href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "result_floating" })}>
       피드백
     </a>
   );
@@ -283,17 +285,26 @@ function PricingCta() {
         <article>
           <h3>Deep Report</h3>
           <p>심화 흐름 분석, 질문 30개, 피드백 10회를 제공하는 유료 리포트.</p>
-          <button type="button" onClick={() => setSelectedPlan("Deep Report")}>준비 중</button>
+          <button type="button" onClick={() => {
+            track("paid_plan_clicked", { plan: "Deep Report" });
+            setSelectedPlan("Deep Report");
+          }}>준비 중</button>
         </article>
         <article>
           <h3>Interview Pack</h3>
           <p>면접 질문, 꼬리 질문, 1분/3분 프로젝트 설명 스크립트까지 확장.</p>
-          <button type="button" onClick={() => setSelectedPlan("Interview Pack")}>준비 중</button>
+          <button type="button" onClick={() => {
+            track("paid_plan_clicked", { plan: "Interview Pack" });
+            setSelectedPlan("Interview Pack");
+          }}>준비 중</button>
         </article>
         <article>
           <h3>Pro</h3>
           <p>월 3개 repo 심화 분석, 답변 피드백, private repo 지원 예정.</p>
-          <button type="button" onClick={() => setSelectedPlan("Pro")}>준비 중</button>
+          <button type="button" onClick={() => {
+            track("paid_plan_clicked", { plan: "Pro" });
+            setSelectedPlan("Pro");
+          }}>준비 중</button>
         </article>
       </section>
       {planMessage ? (
@@ -314,7 +325,7 @@ function FeedbackCta() {
         <h2>분석 결과가 실제 프로젝트 이해에 도움이 되었나요?</h2>
         <p>1분만 시간을 내어 분석 정확도, 질문 품질, 피드백 유용성을 알려주세요.</p>
       </div>
-      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer">
+      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "result_bottom" })}>
         피드백 남기기
       </a>
     </section>

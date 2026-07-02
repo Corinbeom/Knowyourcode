@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { track } from "@vercel/analytics";
 import {
   loadAnalysisResult,
   loadQuizSession,
@@ -124,13 +125,14 @@ export default function QuizPage() {
       }
 
       const evaluation = data.evaluation as QuizEvaluationResult;
-      saveQuizSession({
-        currentQuestionIndex: currentIndex,
-        answers: nextAnswers,
-        evaluation
-      });
-      router.push("/result");
-    } catch (caughtError) {
+    saveQuizSession({
+      currentQuestionIndex: currentIndex,
+      answers: nextAnswers,
+      evaluation
+    });
+    track("quiz_completed", { questionCount: analysis.questions.length });
+    router.push("/result");
+  } catch (caughtError) {
       setQuizState("error");
       setError(caughtError instanceof Error ? caughtError.message : "퀴즈 평가 중 네트워크 오류가 발생했습니다.");
     }
