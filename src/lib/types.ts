@@ -72,3 +72,21 @@ export type EvaluationResult = {
   interviewAnswerDirection: string;
   followUpQuestion: string;
 };
+
+export type QuizAnswer = {
+  questionId: string;
+  answer: string;
+};
+
+export type QuestionEvaluation = EvaluationResult & {
+  questionId: string;
+};
+
+export type QuizEvaluationResult = {
+  averageScore: number;
+  summary: string;
+  strengths: string[];
+  weaknesses: string[];
+  reviewFiles: string[];
+  questionEvaluations: QuestionEvaluation[];
+};

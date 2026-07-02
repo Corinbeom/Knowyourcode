@@ -40,7 +40,7 @@ export default function SetupPage() {
       <SiteNav />
       <section className="setup-page">
         <div className="setup-page__header">
-          <p className="section-label">Analysis Setup</p>
+          <p className="section-label">분석 설정</p>
           <h1>어떤 방식으로 코드를 검증할까요?</h1>
           <p>{setup.url}</p>
         </div>

@@ -1,72 +1,42 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { loadAnalysisResult } from "@/lib/analysis-session";
-import type { AnalysisFocus, AnalysisResult, EvaluationResult, QuestionLevel, QuestionType, UnderstandingQuestion } from "@/lib/types";
-
-type EvaluateState = "idle" | "loading" | "ready" | "error";
-type UsageLimit = {
-  limit: number;
-  remaining: number;
-  resetAt: string;
-  retryAfterSeconds?: number;
-};
+import { loadAnalysisResult, loadQuizSession } from "@/lib/analysis-session";
+import type { AnalysisFocus, AnalysisResult, QuestionEvaluation, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
 
 const ALL_QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"];
 
 export default function ResultPage() {
   const router = useRouter();
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-  const [selectedQuestionId, setSelectedQuestionId] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
-  const [evaluateState, setEvaluateState] = useState<EvaluateState>("idle");
-  const [evaluationError, setEvaluationError] = useState("");
-  const [evaluateLimit, setEvaluateLimit] = useState<UsageLimit | undefined>();
+  const [answers, setAnswers] = useState<QuizAnswer[]>([]);
+  const [evaluation, setEvaluation] = useState<QuizEvaluationResult | null>(null);
 
   useEffect(() => {
-    const stored = loadAnalysisResult();
-    if (!stored) {
+    const storedAnalysis = loadAnalysisResult();
+    if (!storedAnalysis) {
       router.replace("/");
       return;
     }
-    setAnalysis(stored);
-    setSelectedQuestionId(stored.questions[0]?.id ?? "");
-  }, [router]);
 
-  const selectedQuestion = useMemo(
-    () => analysis?.questions.find((question) => question.id === selectedQuestionId) ?? null,
-    [analysis, selectedQuestionId]
-  );
-
-  async function handleEvaluate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!analysis || !selectedQuestionId) return;
-
-    setEvaluateState("loading");
-    setEvaluationError("");
-    setEvaluation(null);
-
-    const response = await fetch("/api/evaluate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ analysis, questionId: selectedQuestionId, answer })
-    });
-    const data = await response.json();
-    setEvaluateLimit(data.limit ?? data.limits?.evaluate ?? evaluateLimit);
-
-    if (!response.ok) {
-      setEvaluateState("error");
-      setEvaluationError(data.error ?? "평가에 실패했습니다.");
+    const storedQuiz = loadQuizSession();
+    if (!storedQuiz?.evaluation) {
+      router.replace("/quiz");
       return;
     }
 
-    setEvaluation(data.evaluation);
-    setEvaluateState("ready");
-  }
+    setAnalysis(storedAnalysis);
+    setAnswers(storedQuiz.answers);
+    setEvaluation(storedQuiz.evaluation);
+  }, [router]);
 
-  if (!analysis) return null;
+  const answerMap = useMemo(
+    () => new Map(answers.map((answer) => [answer.questionId, answer.answer])),
+    [answers]
+  );
+
+  if (!analysis || !evaluation) return null;
 
   return (
     <main>
@@ -77,45 +47,34 @@ export default function ResultPage() {
             새 저장소 분석
           </button>
         </div>
+        <ResultSummary analysis={analysis} evaluation={evaluation} />
         <ProjectReportView analysis={analysis} />
-        <QuestionPanel
-          questions={analysis.questions}
-          selectedQuestionId={selectedQuestionId}
-          onSelect={(id) => {
-            setSelectedQuestionId(id);
-            setEvaluation(null);
-            setEvaluateState("idle");
-          }}
-        />
-        <section className="practice-section">
-          <form className="answer-panel" onSubmit={handleEvaluate}>
-            <div>
-              <p className="section-label">답변 작성</p>
-              <h2>{selectedQuestion?.question ?? "질문을 선택해주세요."}</h2>
-              <p className="section-description">파일명, 처리 흐름, 수정 영향 범위를 연결해서 설명해보세요.</p>
-            </div>
-            <textarea
-              value={answer}
-              onChange={(event) => setAnswer(event.target.value)}
-              placeholder="예: 로그인 요청은 authApi에서 시작해 AuthContext의 상태 갱신으로 이어지고..."
-              maxLength={4000}
-              disabled={evaluateState === "loading"}
-            />
-            <div className="answer-actions">
-              <span>코드 근거를 기준으로 평가합니다. 남은 평가 {formatLimitText(evaluateLimit, "10회/시간")}</span>
-              <button type="submit" disabled={evaluateState === "loading" || !answer.trim() || evaluateLimit?.remaining === 0}>
-                {evaluateState === "loading" ? "평가 중" : "답변 제출 →"}
-              </button>
-            </div>
-            <p className="usage-note">답변 최대 4,000자</p>
-            {evaluateState === "loading" ? <EvaluationLoading /> : null}
-            {evaluateState === "error" ? <p className="error">{evaluationError}</p> : null}
-          </form>
-          {evaluation ? <EvaluationView evaluation={evaluation} /> : null}
-        </section>
+        <QuizResultView analysis={analysis} evaluation={evaluation} answerMap={answerMap} />
         <PricingCta />
       </section>
     </main>
+  );
+}
+
+function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; evaluation: QuizEvaluationResult }) {
+  return (
+    <section className="result-summary">
+      <div>
+        <p className="section-label">최종 결과</p>
+        <h1>{analysis.repo.owner}/{analysis.repo.repo}</h1>
+        <p>{evaluation.summary}</p>
+        <div className="report__badges">
+          <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
+          <div className="level-chip">{formatQuestionLevelLabel(analysis.questionLevel)}</div>
+          <div className="type-chip">{formatQuestionTypesLabel(analysis.questionTypes)}</div>
+          {analysis.questionTargets.length ? <div className="target-chip">{analysis.questionTargets.join(", ")}</div> : null}
+        </div>
+      </div>
+      <div className="result-score">
+        <strong>{evaluation.averageScore}</strong>
+        <span>평균 점수</span>
+      </div>
+    </section>
   );
 }
 
@@ -130,10 +89,6 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
           <h2>{analysis.repo.owner}/{analysis.repo.repo}</h2>
         </div>
         <div className="report__badges">
-          <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
-          <div className="level-chip">{formatQuestionLevelLabel(analysis.questionLevel)}</div>
-          <div className="type-chip">{formatQuestionTypesLabel(analysis.questionTypes)}</div>
-          {analysis.questionTargets.length ? <div className="target-chip">{analysis.questionTargets.join(", ")}</div> : null}
           <div className="score-chip">난이도 {report.difficulty}</div>
           <div className={analysis.ai.used ? "ai-chip is-live" : "ai-chip"}>
             {analysis.ai.used ? `${analysis.ai.provider} 분석` : "기본 분석"}
@@ -182,62 +137,78 @@ function ProjectReportView({ analysis }: { analysis: AnalysisResult }) {
   );
 }
 
-function QuestionPanel({
-  questions,
-  selectedQuestionId,
-  onSelect
+function QuizResultView({
+  analysis,
+  evaluation,
+  answerMap
 }: {
-  questions: UnderstandingQuestion[];
-  selectedQuestionId: string;
-  onSelect: (id: string) => void;
+  analysis: AnalysisResult;
+  evaluation: QuizEvaluationResult;
+  answerMap: Map<string, string>;
 }) {
   return (
-    <section className="questions">
-      <div>
-        <p className="section-label">이해도 질문</p>
-        <h2>질문 5개</h2>
-        <p className="section-description">하나씩 선택해서 답변하고, 실제 코드 기준으로 피드백을 받아보세요.</p>
+    <section className="quiz-result">
+      <div className="report-section-heading">
+        <p className="section-label">퀴즈 피드백</p>
+        <h3>문항별 결과</h3>
+        <p>내 답변과 코드 근거 기반 피드백을 함께 확인하세요.</p>
       </div>
-      <div className="question-layout">
-        <div className="question-list">
-          {questions.map((question) => (
-            <button
-              type="button"
-              className={question.id === selectedQuestionId ? "question is-active" : "question"}
-              key={question.id}
-              onClick={() => onSelect(question.id)}
-            >
-              <span>{question.type}</span>
-              {question.question}
-            </button>
-          ))}
-        </div>
-        <aside className="related-panel surface-card">
-          <p className="section-label">관련 파일</p>
-          <ul>
-            {(questions.find((question) => question.id === selectedQuestionId)?.relatedFiles ?? []).map((file) => (
-              <li key={file}>{file}</li>
-            ))}
-          </ul>
-        </aside>
+      <div className="result-insights">
+        <InfoBlock title="잘한 부분" items={evaluation.strengths} />
+        <InfoBlock title="보완할 부분" items={evaluation.weaknesses} />
+        <InfoBlock title="다시 볼 파일" items={evaluation.reviewFiles} />
+      </div>
+      <div className="question-results">
+        {evaluation.questionEvaluations.map((item, index) => {
+          const question = analysis.questions.find((candidate) => candidate.id === item.questionId);
+          if (!question) return null;
+
+          return (
+            <QuestionResultCard
+              key={item.questionId}
+              index={index}
+              question={question.question}
+              type={question.type}
+              answer={answerMap.get(item.questionId) ?? ""}
+              evaluation={item}
+            />
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function EvaluationView({ evaluation }: { evaluation: EvaluationResult }) {
+function QuestionResultCard({
+  index,
+  question,
+  type,
+  answer,
+  evaluation
+}: {
+  index: number;
+  question: string;
+  type: QuestionType;
+  answer: string;
+  evaluation: QuestionEvaluation;
+}) {
   return (
-    <section className="evaluation">
-      <div className="evaluation__score">
-        <span>{evaluation.score}</span>
-        <p>점수</p>
-        <small>{evaluation.scoreReason}</small>
+    <article className="question-result-card">
+      <div className="question-result-card__header">
+        <div>
+          <span>{index + 1}. {type}</span>
+          <h4>{question}</h4>
+        </div>
+        <strong>{evaluation.score}</strong>
+      </div>
+      <div className="answer-review">
+        <h5>내 답변</h5>
+        <p>{answer}</p>
       </div>
       <div className="evaluation__content">
         <InfoBlock title="잘 이해한 부분" items={evaluation.understood} />
         <InfoBlock title="부족한 부분" items={evaluation.missing} />
         <InfoBlock title="잘못 설명한 부분" items={evaluation.incorrect.length ? evaluation.incorrect : ["명확한 오류는 감지되지 않았습니다."]} />
-        <InfoBlock title="관련 파일" items={evaluation.relatedFiles} />
         <InfoBlock title="다시 볼 코드" items={evaluation.reviewCode} />
         <article className="wide">
           <h3>더 좋은 답변 예시</h3>
@@ -252,19 +223,7 @@ function EvaluationView({ evaluation }: { evaluation: EvaluationResult }) {
           <p>{evaluation.followUpQuestion}</p>
         </article>
       </div>
-    </section>
-  );
-}
-
-function EvaluationLoading() {
-  return (
-    <div className="evaluation-loading">
-      <span className="evaluation-loading__spinner" aria-hidden="true" />
-      <div>
-        <strong>답변을 코드 근거와 대조하는 중입니다</strong>
-        <p>관련 파일, 빠진 설명, 면접 답변 방향을 함께 정리하고 있습니다.</p>
-      </div>
-    </div>
+    </article>
   );
 }
 
@@ -320,21 +279,6 @@ function formatQuestionTypesLabel(questionTypes: QuestionType[]): string {
     return "질문 유형 전체";
   }
   return questionTypes.join(", ");
-}
-
-function formatLimitText(limit: UsageLimit | undefined, fallback: string): string {
-  if (!limit) return fallback;
-  if (limit.remaining === 0) return `0/${limit.limit} · ${formatResetTime(limit.resetAt)} 후 초기화`;
-  return `${limit.remaining}/${limit.limit}회 남음`;
-}
-
-function formatResetTime(resetAt: string): string {
-  const resetDate = new Date(resetAt);
-  if (Number.isNaN(resetDate.getTime())) return "잠시";
-
-  const diffMinutes = Math.max(Math.ceil((resetDate.getTime() - Date.now()) / 60_000), 1);
-  if (diffMinutes >= 60) return `${Math.ceil(diffMinutes / 60)}시간`;
-  return `${diffMinutes}분`;
 }
 
 function SiteNav() {

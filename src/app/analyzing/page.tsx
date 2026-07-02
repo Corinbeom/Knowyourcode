@@ -78,7 +78,7 @@ export default function AnalyzingPage() {
 
       saveAnalysisResult(data.analysis);
       window.clearInterval(interval);
-      router.push("/result");
+      router.push("/quiz");
     }
 
     analyze().catch((caughtError) => {
@@ -114,9 +114,14 @@ export default function AnalyzingPage() {
         {error ? (
           <div className="analysis-error">
             <p className="error">{error}</p>
-            <button className="secondary-button" type="button" onClick={() => router.push("/setup")}>
-              설정으로 돌아가기
-            </button>
+            <div className="analysis-error__actions">
+              <button className="primary-button" type="button" onClick={() => window.location.reload()}>
+                다시 시도
+              </button>
+              <button className="secondary-button" type="button" onClick={() => router.push("/setup")}>
+                설정으로 돌아가기
+              </button>
+            </div>
           </div>
         ) : null}
       </section>
