@@ -6,6 +6,7 @@ import { loadAnalysisResult, loadQuizSession } from "@/lib/analysis-session";
 import type { AnalysisFocus, AnalysisResult, QuestionEvaluation, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
 
 const ALL_QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"];
+const FEEDBACK_URL = process.env.NEXT_PUBLIC_FEEDBACK_URL || "https://tally.so/r/1AxeG1";
 
 export default function ResultPage() {
   const router = useRouter();
@@ -41,6 +42,7 @@ export default function ResultPage() {
   return (
     <main>
       <SiteNav />
+      <FloatingFeedbackButton />
       <section className="workspace result-workspace">
         <div className="result-actions">
           <button className="secondary-button" type="button" onClick={() => router.push("/")}>
@@ -51,6 +53,7 @@ export default function ResultPage() {
         <ProjectReportView analysis={analysis} />
         <QuizResultView analysis={analysis} evaluation={evaluation} answerMap={answerMap} />
         <PricingCta />
+        <FeedbackCta />
       </section>
     </main>
   );
@@ -75,6 +78,14 @@ function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; eva
         <span>평균 점수</span>
       </div>
     </section>
+  );
+}
+
+function FloatingFeedbackButton() {
+  return (
+    <a className="floating-feedback-button" href={FEEDBACK_URL} target="_blank" rel="noreferrer">
+      피드백
+    </a>
   );
 }
 
@@ -146,34 +157,62 @@ function QuizResultView({
   evaluation: QuizEvaluationResult;
   answerMap: Map<string, string>;
 }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedEvaluation = evaluation.questionEvaluations[selectedIndex] ?? evaluation.questionEvaluations[0];
+  const selectedQuestion = analysis.questions.find((candidate) => candidate.id === selectedEvaluation?.questionId);
+  const questionCount = evaluation.questionEvaluations.length;
+
+  function moveQuestion(direction: -1 | 1) {
+    setSelectedIndex((current) => {
+      const next = current + direction;
+      if (next < 0) return questionCount - 1;
+      if (next >= questionCount) return 0;
+      return next;
+    });
+  }
+
+  if (!selectedEvaluation || !selectedQuestion) return null;
+
   return (
     <section className="quiz-result">
       <div className="report-section-heading">
         <p className="section-label">퀴즈 피드백</p>
         <h3>문항별 결과</h3>
-        <p>내 답변과 코드 근거 기반 피드백을 함께 확인하세요.</p>
+        <p>문항을 하나씩 이동하며 내 답변과 코드 근거 기반 피드백을 확인하세요.</p>
       </div>
       <div className="result-insights">
         <InfoBlock title="잘한 부분" items={evaluation.strengths} />
         <InfoBlock title="보완할 부분" items={evaluation.weaknesses} />
         <InfoBlock title="다시 볼 파일" items={evaluation.reviewFiles} />
       </div>
-      <div className="question-results">
-        {evaluation.questionEvaluations.map((item, index) => {
-          const question = analysis.questions.find((candidate) => candidate.id === item.questionId);
-          if (!question) return null;
-
-          return (
-            <QuestionResultCard
-              key={item.questionId}
-              index={index}
-              question={question.question}
-              type={question.type}
-              answer={answerMap.get(item.questionId) ?? ""}
-              evaluation={item}
-            />
-          );
-        })}
+      <div className="question-score-nav" aria-label="문항별 점수">
+        {evaluation.questionEvaluations.map((item, index) => (
+          <button
+            key={item.questionId}
+            type="button"
+            className={index === selectedIndex ? "is-active" : ""}
+            onClick={() => setSelectedIndex(index)}
+          >
+            <span>Q{index + 1}</span>
+            <strong>{item.score}</strong>
+          </button>
+        ))}
+      </div>
+      <div className="question-result-shell">
+        <button className="question-arrow" type="button" onClick={() => moveQuestion(-1)} aria-label="이전 문항">
+          &lt;
+        </button>
+        <QuestionResultCard
+          index={selectedIndex}
+          question={selectedQuestion.question}
+          type={selectedQuestion.type}
+          answer={answerMap.get(selectedEvaluation.questionId) ?? ""}
+          evaluation={selectedEvaluation}
+          total={questionCount}
+        />
+        <button className="question-arrow" type="button" onClick={() => moveQuestion(1)} aria-label="다음 문항">
+          &gt;
+        </button>
       </div>
     </section>
   );
@@ -184,13 +223,15 @@ function QuestionResultCard({
   question,
   type,
   answer,
-  evaluation
+  evaluation,
+  total
 }: {
   index: number;
   question: string;
   type: QuestionType;
   answer: string;
   evaluation: QuestionEvaluation;
+  total: number;
 }) {
   return (
     <article className="question-result-card">
@@ -199,7 +240,10 @@ function QuestionResultCard({
           <span>{index + 1}. {type}</span>
           <h4>{question}</h4>
         </div>
-        <strong>{evaluation.score}</strong>
+        <div className="question-result-card__score">
+          <strong>{evaluation.score}</strong>
+          <small>{index + 1} / {total}</small>
+        </div>
       </div>
       <div className="answer-review">
         <h5>내 답변</h5>
@@ -228,23 +272,51 @@ function QuestionResultCard({
 }
 
 function PricingCta() {
+  const [selectedPlan, setSelectedPlan] = useState("");
+  const planMessage = selectedPlan
+    ? `${selectedPlan}는 아직 준비 중입니다. MVP에서는 무료 이해도 테스트 결과를 먼저 제공하고, 유료 리포트/면접 패키지는 이후 오픈 예정입니다.`
+    : "";
+
   return (
-    <section className="pricing">
-      <article>
-        <h3>Deep Report</h3>
-        <p>심화 흐름 분석, 질문 30개, 피드백 10회를 제공하는 유료 리포트.</p>
-        <button type="button">관심 있음</button>
-      </article>
-      <article>
-        <h3>Interview Pack</h3>
-        <p>면접 질문, 꼬리 질문, 1분/3분 프로젝트 설명 스크립트까지 확장.</p>
-        <button type="button">면접 대비하기</button>
-      </article>
-      <article>
-        <h3>Pro</h3>
-        <p>월 3개 repo 심화 분석, 답변 피드백, private repo 지원 예정.</p>
-        <button type="button">출시 알림</button>
-      </article>
+    <>
+      <section className="pricing">
+        <article>
+          <h3>Deep Report</h3>
+          <p>심화 흐름 분석, 질문 30개, 피드백 10회를 제공하는 유료 리포트.</p>
+          <button type="button" onClick={() => setSelectedPlan("Deep Report")}>준비 중</button>
+        </article>
+        <article>
+          <h3>Interview Pack</h3>
+          <p>면접 질문, 꼬리 질문, 1분/3분 프로젝트 설명 스크립트까지 확장.</p>
+          <button type="button" onClick={() => setSelectedPlan("Interview Pack")}>준비 중</button>
+        </article>
+        <article>
+          <h3>Pro</h3>
+          <p>월 3개 repo 심화 분석, 답변 피드백, private repo 지원 예정.</p>
+          <button type="button" onClick={() => setSelectedPlan("Pro")}>준비 중</button>
+        </article>
+      </section>
+      {planMessage ? (
+        <div className="pricing-notice" role="status">
+          <strong>{selectedPlan}</strong>
+          <p>{planMessage}</p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function FeedbackCta() {
+  return (
+    <section className="feedback-cta result-feedback-cta">
+      <div>
+        <p className="section-label">피드백 요청</p>
+        <h2>분석 결과가 실제 프로젝트 이해에 도움이 되었나요?</h2>
+        <p>1분만 시간을 내어 분석 정확도, 질문 품질, 피드백 유용성을 알려주세요.</p>
+      </div>
+      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer">
+        피드백 남기기
+      </a>
     </section>
   );
 }
