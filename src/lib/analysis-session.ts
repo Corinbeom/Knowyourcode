@@ -1,4 +1,4 @@
-import type { AnalysisFocus, AnalysisResult, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "./types";
+import type { AnalysisFocus, AnalysisResult, CommitAnalysisResult, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "./types";
 
 export type AnalysisSetup = {
   url: string;
@@ -17,6 +17,8 @@ export type QuizSession = {
 const SETUP_KEY = "knowyourcode.analysisSetup";
 const RESULT_KEY = "knowyourcode.analysisResult";
 const QUIZ_KEY = "knowyourcode.quizSession";
+const COMMIT_RESULT_KEY = "knowyourcode.commitAnalysisResult";
+const COMMIT_QUIZ_KEY = "knowyourcode.commitQuizSession";
 
 export const DEFAULT_QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"];
 
@@ -54,6 +56,32 @@ export function loadQuizSession(): QuizSession | null {
 export function clearQuizSession() {
   if (typeof window === "undefined") return;
   window.sessionStorage.removeItem(QUIZ_KEY);
+}
+
+export function saveCommitAnalysisResult(analysis: CommitAnalysisResult) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(COMMIT_RESULT_KEY, JSON.stringify(analysis));
+  clearCommitQuizSession();
+}
+
+export function loadCommitAnalysisResult(): CommitAnalysisResult | null {
+  if (typeof window === "undefined") return null;
+  return parseJson<CommitAnalysisResult>(window.sessionStorage.getItem(COMMIT_RESULT_KEY));
+}
+
+export function saveCommitQuizSession(session: QuizSession) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(COMMIT_QUIZ_KEY, JSON.stringify(session));
+}
+
+export function loadCommitQuizSession(): QuizSession | null {
+  if (typeof window === "undefined") return null;
+  return parseJson<QuizSession>(window.sessionStorage.getItem(COMMIT_QUIZ_KEY));
+}
+
+export function clearCommitQuizSession() {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(COMMIT_QUIZ_KEY);
 }
 
 function parseJson<T>(raw: string | null): T | null {

@@ -40,6 +40,59 @@ export type UnderstandingQuestion = {
   relatedFiles: string[];
 };
 
+export type CommitInfo = {
+  owner: string;
+  repo: string;
+  sha: string;
+  shortSha: string;
+  url: string;
+  message: string;
+  author: string;
+  committedAt: string;
+};
+
+export type CommitFileStatus = "added" | "modified" | "removed" | "renamed" | "copied" | "changed" | "unchanged";
+
+export type CommitFileChange = {
+  path: string;
+  previousPath?: string;
+  status: CommitFileStatus;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch: string;
+};
+
+export type CommitQuestionType = "변경 의도" | "변경 영향도" | "테스트/리스크" | "리뷰형";
+
+export type CommitQuestion = {
+  id: string;
+  type: CommitQuestionType;
+  question: string;
+  relatedFiles: string[];
+};
+
+export type CommitReport = {
+  oneLineSummary: string;
+  changeIntent: string;
+  impactScope: string[];
+  riskAreas: string[];
+  testSuggestions: string[];
+  changedFiles: FileSummary[];
+};
+
+export type CommitAnalysisResult = {
+  commit: CommitInfo;
+  analyzedAt: string;
+  fileCount: number;
+  totalAdditions: number;
+  totalDeletions: number;
+  ai: AiUsage;
+  report: CommitReport;
+  questions: CommitQuestion[];
+  contextFiles: FileSummary[];
+};
+
 export type AnalysisResult = {
   repo: RepoInfo;
   analyzedAt: string;

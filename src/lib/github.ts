@@ -1,5 +1,5 @@
 import AdmZip from "adm-zip";
-import type { RepoInfo, SourceFile } from "./types";
+import type { CommitFileChange, CommitInfo, RepoInfo, SourceFile } from "./types";
 
 const EXCLUDED_DIRS = new Set([
   "node_modules",
@@ -69,6 +69,8 @@ const TEXT_EXTENSIONS = new Set([
 const MAX_FILE_SIZE = 60_000;
 const MAX_TOTAL_FILES = 1_000;
 const MAX_REPO_ZIP_BYTES = Number(process.env.MAX_REPO_ZIP_BYTES ?? 50_000_000);
+const MAX_COMMIT_FILES = Number(process.env.MAX_COMMIT_FILES ?? 40);
+const MAX_COMMIT_PATCH_CHARS = Number(process.env.MAX_COMMIT_PATCH_CHARS ?? 120_000);
 
 export function parseGitHubUrl(input: string): RepoInfo {
   let url: URL;
@@ -91,6 +93,35 @@ export function parseGitHubUrl(input: string): RepoInfo {
   }
 
   return { owner, repo, url: `https://github.com/${owner}/${repo}` };
+}
+
+export function parseGitHubCommitUrl(input: string): Pick<CommitInfo, "owner" | "repo" | "sha" | "shortSha" | "url"> {
+  let url: URL;
+
+  try {
+    url = new URL(input.trim());
+  } catch {
+    throw new Error("올바른 GitHub commit URL을 입력해주세요.");
+  }
+
+  if (url.hostname !== "github.com") {
+    throw new Error("github.com public commit URL만 지원합니다.");
+  }
+
+  const [owner, repoWithSuffix, segment, sha] = url.pathname.split("/").filter(Boolean);
+  const repo = repoWithSuffix?.replace(/\.git$/, "");
+
+  if (!owner || !repo || segment !== "commit" || !sha) {
+    throw new Error("GitHub commit URL 형식이 아닙니다. /owner/repo/commit/sha 형태로 입력해주세요.");
+  }
+
+  return {
+    owner,
+    repo,
+    sha,
+    shortSha: sha.slice(0, 7),
+    url: `https://github.com/${owner}/${repo}/commit/${sha}`
+  };
 }
 
 export async function fetchRepoFiles(repo: RepoInfo): Promise<SourceFile[]> {
@@ -141,6 +172,74 @@ export async function fetchRepoFiles(repo: RepoInfo): Promise<SourceFile[]> {
     });
 }
 
+export async function fetchCommitChanges(input: Pick<CommitInfo, "owner" | "repo" | "sha" | "shortSha" | "url">): Promise<{
+  commit: CommitInfo;
+  files: CommitFileChange[];
+  totalAdditions: number;
+  totalDeletions: number;
+}> {
+  const response = await fetch(`https://api.github.com/repos/${input.owner}/${input.repo}/commits/${input.sha}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "KnowYourCode-MVP"
+    },
+    cache: "no-store"
+  });
+
+  if (response.status === 404) {
+    throw new Error("커밋을 찾을 수 없거나 public repository가 아닙니다.");
+  }
+
+  if (response.status === 403) {
+    throw new Error("GitHub API 호출 제한에 도달했습니다. 잠시 후 다시 시도해주세요.");
+  }
+
+  if (!response.ok) {
+    throw new Error(`GitHub 커밋 정보를 가져오지 못했습니다. (${response.status})`);
+  }
+
+  const data = await response.json();
+  const rawFiles = Array.isArray(data.files) ? data.files : [];
+  let usedPatchChars = 0;
+
+  const files: CommitFileChange[] = rawFiles.slice(0, MAX_COMMIT_FILES).map((file: Record<string, unknown>) => {
+    const rawPatch = typeof file.patch === "string" ? file.patch : "";
+    const remaining = Math.max(0, MAX_COMMIT_PATCH_CHARS - usedPatchChars);
+    const patch = rawPatch.slice(0, remaining);
+    usedPatchChars += patch.length;
+
+    return {
+      path: String(file.filename ?? "unknown"),
+      previousPath: typeof file.previous_filename === "string" ? file.previous_filename : undefined,
+      status: normalizeCommitStatus(file.status),
+      additions: toNumber(file.additions),
+      deletions: toNumber(file.deletions),
+      changes: toNumber(file.changes),
+      patch
+    };
+  });
+
+  const message = String(data.commit?.message ?? "").split("\n")[0] || "커밋 메시지 없음";
+  const author = String(data.commit?.author?.name ?? data.author?.login ?? "unknown");
+  const committedAt = String(data.commit?.author?.date ?? "");
+
+  return {
+    commit: {
+      owner: input.owner,
+      repo: input.repo,
+      sha: String(data.sha ?? input.sha),
+      shortSha: String(data.sha ?? input.sha).slice(0, 7),
+      url: input.url,
+      message,
+      author,
+      committedAt
+    },
+    files,
+    totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
+    totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0)
+  };
+}
+
 function normalizeZipPath(entryName: string): string {
   const parts = entryName.split("/");
   return parts.slice(1).join("/");
@@ -174,4 +273,23 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000) return `${Math.floor(bytes / 1_000_000)}MB`;
   if (bytes >= 1_000) return `${Math.floor(bytes / 1_000)}KB`;
   return `${bytes}B`;
+}
+
+function normalizeCommitStatus(status: unknown): CommitFileChange["status"] {
+  if (
+    status === "added" ||
+    status === "modified" ||
+    status === "removed" ||
+    status === "renamed" ||
+    status === "copied" ||
+    status === "changed" ||
+    status === "unchanged"
+  ) {
+    return status;
+  }
+  return "modified";
+}
+
+function toNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
