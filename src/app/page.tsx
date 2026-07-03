@@ -1,10 +1,9 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
-import { DEFAULT_QUESTION_TYPES, saveAnalysisSetup } from "@/lib/analysis-session";
 
 const CORE_QUESTIONS = [
   "사용자의 요청은 어떤 파일들을 거쳐 처리되나요?",
@@ -101,37 +100,20 @@ const FEEDBACK_URL = process.env.NEXT_PUBLIC_FEEDBACK_URL || "https://tally.so/r
 
 export default function Home() {
   const router = useRouter();
-  const [repoUrl, setRepoUrl] = useState("");
   const [activeDemoIndex, setActiveDemoIndex] = useState(0);
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [answerMode, setAnswerMode] = useState<"weak" | "better">("weak");
-  const [isFloatingCtaOpen, setIsFloatingCtaOpen] = useState(false);
   const activeDemo = INTERACTIVE_DEMOS[activeDemoIndex];
   const activeFile = activeDemo.files[activeFileIndex] ?? activeDemo.files[0];
 
-  function handleStart(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!repoUrl.trim()) return;
-    track("repo_submitted", { source: "landing" });
-
-    saveAnalysisSetup({
-      url: repoUrl.trim(),
-      focus: "balanced",
-      questionLevel: "standard",
-      questionTypes: DEFAULT_QUESTION_TYPES,
-      questionTargets: ""
-    });
-    router.push("/setup");
-  }
-
-  function openFloatingCta(source: string) {
+  function goStart(source: string) {
     track("landing_cta_opened", { source });
-    setIsFloatingCtaOpen(true);
+    router.push("/start");
   }
 
   return (
     <main>
-      <SiteNav onStartClick={() => openFloatingCta("nav")} />
+      <SiteNav onStartClick={() => goStart("nav")} />
       <section className="hero landing-hero" id="start">
         <div className="hero__inner">
           <div>
@@ -146,7 +128,7 @@ export default function Home() {
               당신이 프로젝트를 진짜 이해하고 있는지 확인해주는 AI 코드 이해도 테스트입니다.
             </p>
             <div className="hero-actions">
-              <button className="primary-button" type="button" onClick={() => openFloatingCta("hero")}>
+              <button className="primary-button" type="button" onClick={() => goStart("hero")}>
                 내 코드 이해도 테스트하기
               </button>
               <a className="secondary-link-button" href="#interactive-preview">
@@ -155,6 +137,7 @@ export default function Home() {
             </div>
             <div className="hero__meta">
               <span>· Public repository 지원</span>
+              <span>· Commit Mode 지원</span>
               <span>· 질문 5개 기반 테스트</span>
               <span>· 코드 근거 피드백</span>
             </div>
@@ -213,7 +196,7 @@ export default function Home() {
             <p className="section-label">바로 시작하기</p>
             <h3>내 GitHub 저장소로 이해도 테스트를 시작하세요.</h3>
           </div>
-          <button className="primary-button" type="button" onClick={() => openFloatingCta("inline")}>
+          <button className="primary-button" type="button" onClick={() => goStart("inline")}>
             GitHub URL 입력하기 →
           </button>
         </div>
@@ -334,21 +317,12 @@ export default function Home() {
           <p>KnowYourCode helps you understand what you built.</p>
           <strong>AI가 만든 코드, 이제 진짜 내 코드로 만드세요.</strong>
         </div>
-        <button className="primary-button" type="button" onClick={() => openFloatingCta("final")}>
+        <button className="primary-button" type="button" onClick={() => goStart("final")}>
           GitHub 저장소로 이해도 테스트 시작하기
         </button>
       </section>
       <FeedbackCta />
-      <FloatingRepoCta
-        repoUrl={repoUrl}
-        setRepoUrl={setRepoUrl}
-        onSubmit={handleStart}
-        isOpen={isFloatingCtaOpen}
-        onOpen={() => openFloatingCta("floating")}
-        onClose={() => {
-          setIsFloatingCtaOpen(false);
-        }}
-      />
+      <FloatingStartCta onClick={() => goStart("floating")} />
     </main>
   );
 }
@@ -368,51 +342,12 @@ function FeedbackCta() {
   );
 }
 
-function FloatingRepoCta({
-  repoUrl,
-  setRepoUrl,
-  onSubmit,
-  isOpen,
-  onOpen,
-  onClose
-}: {
-  repoUrl: string;
-  setRepoUrl: (value: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-}) {
+function FloatingStartCta({ onClick }: { onClick: () => void }) {
   return (
-    <aside className={isOpen || repoUrl ? "floating-cta is-open" : "floating-cta"}>
-      <button className="floating-cta__trigger" type="button" onClick={onOpen} aria-expanded={isOpen || Boolean(repoUrl)}>
+    <aside className="floating-cta">
+      <button className="floating-cta__trigger" type="button" onClick={onClick}>
         테스트 시작
       </button>
-      <form className="floating-cta__panel" onSubmit={onSubmit}>
-        <div className="floating-cta__header">
-          <div>
-            <p className="section-label">GitHub 저장소 입력</p>
-            <strong>내 코드 이해도 테스트하기</strong>
-          </div>
-          <button className="floating-cta__close" type="button" onClick={onClose} aria-label="입력창 닫기">
-            ×
-          </button>
-        </div>
-        <label htmlFor="floatingRepoUrl">Public GitHub repository URL</label>
-        <div className="repo-input-wrap">
-          <span>github</span>
-          <input
-            id="floatingRepoUrl"
-            value={repoUrl}
-            onChange={(event) => setRepoUrl(event.target.value)}
-            onFocus={onOpen}
-            placeholder="https://github.com/username/project"
-          />
-        </div>
-        <button className="primary-button" type="submit" disabled={!repoUrl.trim()}>
-          테스트 시작 →
-        </button>
-      </form>
     </aside>
   );
 }
