@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
+import { TallyFeedbackButton } from "./tally-feedback-button";
 
 const CORE_QUESTIONS = [
   "사용자의 요청은 어떤 파일들을 거쳐 처리되나요?",
@@ -95,8 +96,6 @@ const TARGET_USERS = [
   "프로젝트를 유지보수 가능한 상태로 이해하고 싶은 주니어 개발자",
   "새 코드베이스를 빠르게 파악해야 하는 사람"
 ];
-
-const FEEDBACK_URL = process.env.NEXT_PUBLIC_FEEDBACK_URL || "https://tally.so/r/1AxeG1";
 
 export default function Home() {
   const router = useRouter();
@@ -335,9 +334,9 @@ function FeedbackCta() {
         <h2>KnowYourCode를 더 정확한 코드 이해도 테스트로 만들고 있습니다.</h2>
         <p>서비스를 사용해본 뒤 분석 결과, 질문, 피드백 품질에 대한 의견을 남겨주세요.</p>
       </div>
-      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "landing" })}>
+      <TallyFeedbackButton className="feedback-button" source="landing">
         피드백 남기기
-      </a>
+      </TallyFeedbackButton>
     </section>
   );
 }

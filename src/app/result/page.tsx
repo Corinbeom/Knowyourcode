@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
 import { loadAnalysisResult, loadQuizSession } from "@/lib/analysis-session";
+import { TallyFeedbackButton } from "@/app/tally-feedback-button";
 import type { AnalysisFocus, AnalysisResult, QuestionEvaluation, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
 
 const ALL_QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"];
-const FEEDBACK_URL = process.env.NEXT_PUBLIC_FEEDBACK_URL || "https://tally.so/r/1AxeG1";
 
 export default function ResultPage() {
   const router = useRouter();
@@ -85,9 +85,9 @@ function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; eva
 
 function FloatingFeedbackButton() {
   return (
-    <a className="floating-feedback-button" href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "result_floating" })}>
+    <TallyFeedbackButton className="floating-feedback-button" source="result_floating">
       피드백
-    </a>
+    </TallyFeedbackButton>
   );
 }
 
@@ -325,9 +325,9 @@ function FeedbackCta() {
         <h2>분석 결과가 실제 프로젝트 이해에 도움이 되었나요?</h2>
         <p>1분만 시간을 내어 분석 정확도, 질문 품질, 피드백 유용성을 알려주세요.</p>
       </div>
-      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "result_bottom" })}>
+      <TallyFeedbackButton className="feedback-button" source="result_bottom">
         피드백 남기기
-      </a>
+      </TallyFeedbackButton>
     </section>
   );
 }

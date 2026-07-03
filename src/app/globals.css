@@ -765,7 +765,8 @@ p {
   line-height: 1.7;
 }
 
-.feedback-cta a {
+.feedback-cta a,
+.feedback-cta .feedback-button {
   min-height: 48px;
   border: 1px solid rgba(52, 211, 153, 0.4);
   border-radius: 8px;
@@ -783,7 +784,9 @@ p {
 }
 
 .feedback-cta a:hover,
-.feedback-cta a:focus-visible {
+.feedback-cta a:focus-visible,
+.feedback-cta .feedback-button:hover,
+.feedback-cta .feedback-button:focus-visible {
   border-color: rgba(52, 211, 153, 0.72);
   background: rgba(52, 211, 153, 0.2);
   transform: translateY(-1px);

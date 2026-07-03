@@ -3,10 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
+import { TallyFeedbackButton } from "@/app/tally-feedback-button";
 import { loadCommitAnalysisResult, loadCommitQuizSession } from "@/lib/analysis-session";
 import type { CommitAnalysisResult, QuizAnswer, QuizEvaluationResult, QuestionEvaluation } from "@/lib/types";
-
-const FEEDBACK_URL = process.env.NEXT_PUBLIC_FEEDBACK_URL || "https://tally.so/r/1AxeG1";
 
 export default function CommitResultPage() {
   const router = useRouter();
@@ -40,9 +39,9 @@ export default function CommitResultPage() {
   return (
     <main>
       <SiteNav />
-      <a className="floating-feedback-button" href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "commit_result_floating" })}>
+      <TallyFeedbackButton className="floating-feedback-button" source="commit_result_floating">
         피드백
-      </a>
+      </TallyFeedbackButton>
       <section className="workspace result-workspace">
         <div className="result-actions">
           <button className="secondary-button" type="button" onClick={() => router.push("/")}>
@@ -255,9 +254,9 @@ function FeedbackCta() {
         <h2>Commit Mode 결과가 변경 이해에 도움이 되었나요?</h2>
         <p>커밋 분석 정확도, 질문 품질, 리포트에서 아쉬웠던 점을 알려주세요.</p>
       </div>
-      <a href={FEEDBACK_URL} target="_blank" rel="noreferrer" onClick={() => track("feedback_clicked", { source: "commit_result_bottom" })}>
+      <TallyFeedbackButton className="feedback-button" source="commit_result_bottom">
         피드백 남기기
-      </a>
+      </TallyFeedbackButton>
     </section>
   );
 }
