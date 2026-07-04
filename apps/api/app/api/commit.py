@@ -1,14 +1,16 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.commit import AnalyzeCommitRequest, AnalyzeCommitResponse
+from app.security import rate_limiter
 from app.services.commit_analysis import build_commit_static_context, build_fallback_commit_analysis
 from app.services.github_commit import fetch_commit_changes, parse_github_commit_url
 from app.services.llm import generate_commit_analysis
 
 router = APIRouter()
+commit_rate_limit = rate_limiter("analyze_commit", "API_ANALYZE_COMMIT_LIMIT_PER_HOUR", 5)
 
 
-@router.post("/analyze-commit", response_model=AnalyzeCommitResponse)
+@router.post("/analyze-commit", response_model=AnalyzeCommitResponse, dependencies=[Depends(commit_rate_limit)])
 def analyze_commit(payload: AnalyzeCommitRequest) -> dict:
     try:
         commit_input = parse_github_commit_url(payload.url)

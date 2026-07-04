@@ -31,6 +31,17 @@ cp apps/api/.env.example apps/api/.env.local
 
 로컬 개발에서는 FastAPI가 `apps/api/.env.local`, `apps/api/.env`, `apps/web/.env.local` 순서로 환경변수를 읽습니다. 이미 Web에 LLM 키를 넣어두었다면 API 쪽에 중복으로 넣지 않아도 됩니다.
 
+운영 API 서버에서는 최소한 아래 값을 명시합니다.
+
+```bash
+API_ENV=production
+API_DOCS_ENABLED=false
+API_ALLOWED_ORIGINS=https://knowyourcode.cloud,https://www.knowyourcode.cloud,https://knowyourcode.vercel.app
+API_ANALYZE_COMMIT_LIMIT_PER_HOUR=5
+AI_PROVIDER=gemini
+GEMINI_API_KEY=...
+```
+
 ## 설치
 
 Web 의존성:
@@ -117,3 +128,24 @@ python -m py_compile apps/api/app/main.py apps/api/app/api/commit.py apps/api/ap
 - Vercel Root Directory는 `apps/web`으로 설정합니다.
 - FastAPI를 별도 서버에 배포한 뒤 `BACKEND_API_URL`을 운영 API 주소로 설정합니다.
 - 운영 환경에서는 CORS origin, rate limit, API key 사용량 제한을 별도로 강화해야 합니다.
+- 운영 FastAPI에서는 `API_ENV=production`, `API_DOCS_ENABLED=false`로 `/docs`, `/redoc`, `/openapi.json`을 비공개 처리합니다.
+- Nginx에서는 `.env`, `.git` 같은 민감 경로를 FastAPI까지 넘기지 않고 차단하는 것을 권장합니다.
+
+### API CI/CD
+
+`.github/workflows/deploy-api.yml`은 `main` 브랜치에 API 관련 변경이 push되면 SSH로 OCI 인스턴스에 접속해 FastAPI 서버를 갱신합니다.
+
+GitHub Actions secrets:
+
+```bash
+OCI_HOST=168.107.12.35
+OCI_USER=ubuntu
+OCI_SSH_KEY=...
+OCI_APP_DIR=/home/ubuntu/Knowyourcode
+```
+
+서버에서 `ubuntu` 유저가 API 서비스 재시작을 할 수 있도록 sudoers에 아래처럼 등록합니다. `systemctl` 경로는 서버에서 `which systemctl`로 확인합니다.
+
+```txt
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart knowyourcode-api, /usr/bin/systemctl is-active knowyourcode-api
+```
