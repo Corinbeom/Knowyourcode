@@ -1093,10 +1093,16 @@ p {
 
 .setup-actions,
 .result-actions {
-  margin-top: 18px;
+  margin: 0 0 18px;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.result-actions .secondary-button {
+  min-height: 44px;
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.88);
 }
 
 .analysis-page {
@@ -1743,6 +1749,19 @@ textarea::placeholder {
   padding: 5px 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
+}
+
+.report__badges .score-chip,
+.report__badges .secondary-link-button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.report__badges .secondary-link-button {
+  border-radius: 8px;
+  padding: 0 14px;
 }
 
 .tag.warning,

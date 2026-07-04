@@ -20,6 +20,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GitHub commit URL을 입력해주세요." }, { status: 400 });
     }
 
+    const proxied = await proxyAnalyzeCommit(body.url, rateLimit.meta);
+    if (proxied) return proxied;
+
     const commitInput = parseGitHubCommitUrl(body.url);
     const commitChanges = await fetchCommitChanges(commitInput);
 
@@ -44,4 +47,29 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "커밋 분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+async function proxyAnalyzeCommit(url: string, limitMeta: unknown): Promise<NextResponse | null> {
+  const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+  if (!backendUrl) return null;
+
+  const response = await fetch(`${backendUrl}/analyze-commit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+    cache: "no-store"
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = typeof data.detail === "string" ? data.detail : data.error ?? "커밋 분석 중 오류가 발생했습니다.";
+    return NextResponse.json({ error: message }, { status: response.status });
+  }
+
+  return NextResponse.json({
+    ...data,
+    limits: {
+      analyze: limitMeta
+    }
+  });
 }
