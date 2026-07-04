@@ -60,3 +60,4 @@ class CommitAnalysisResult(BaseModel):
 
 class AnalyzeCommitResponse(BaseModel):
     analysis: CommitAnalysisResult
+    limits: dict | None = None

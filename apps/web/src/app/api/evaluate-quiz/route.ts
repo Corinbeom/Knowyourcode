@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { evaluateQuiz } from "@/lib/ai";
+import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import type { AnalysisResult, QuizAnswer } from "@/lib/types";
 
@@ -49,10 +50,13 @@ export async function POST(request: Request) {
       );
     }
 
+    const backendAuth = await getBackendAuth();
+    if (backendAuth instanceof Response) return backendAuth;
+
     const proxied = await proxyEvaluation("evaluate-quiz", {
       analysis: body.analysis,
       answers
-    }, rateLimit.meta);
+    }, rateLimit.meta, backendAuth);
     if (proxied) return proxied;
 
     const evaluation = await evaluateQuiz({
@@ -67,13 +71,13 @@ export async function POST(request: Request) {
   }
 }
 
-async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown): Promise<NextResponse | null> {
+async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
   const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
   if (!backendUrl) return null;
 
   const response = await fetch(`${backendUrl}/${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuth.headers },
     body: JSON.stringify(body),
     cache: "no-store"
   });
@@ -84,5 +88,13 @@ async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown):
     return NextResponse.json({ error: message }, { status: response.status });
   }
 
-  return NextResponse.json({ ...data, limits: { evaluate: limitMeta } });
+  return NextResponse.json({ ...data, limits: { evaluate: limitMeta, backend: data.limits } });
+}
+
+async function getBackendAuth(): Promise<BackendAuth | Response> {
+  try {
+    return await requireBackendAuth();
+  } catch (error) {
+    return authErrorResponse(error) ?? NextResponse.json({ error: "인증 처리 중 오류가 발생했습니다." }, { status: 500 });
+  }
 }

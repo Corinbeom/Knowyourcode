@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import { Analytics } from "@vercel/analytics/next";
+import { AppSessionProvider } from "./session-provider";
 import "./globals.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://knowyourcode.vercel.app";
@@ -47,9 +48,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ko">
       <body>
-        {children}
-        <Script src="https://tally.so/widgets/embed.js" strategy="afterInteractive" />
-        <Analytics />
+        <AppSessionProvider>
+          {children}
+          <Script src="https://tally.so/widgets/embed.js" strategy="afterInteractive" />
+          <Analytics />
+        </AppSessionProvider>
       </body>
     </html>
   );

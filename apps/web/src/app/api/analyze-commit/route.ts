@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateCommitAnalysis } from "@/lib/ai";
 import { buildCommitStaticContext, buildFallbackCommitAnalysis } from "@/lib/commit-analysis";
 import { fetchCommitChanges, parseGitHubCommitUrl } from "@/lib/github";
+import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -20,7 +21,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GitHub commit URL을 입력해주세요." }, { status: 400 });
     }
 
-    const proxied = await proxyAnalyzeCommit(body.url, rateLimit.meta);
+    const backendAuth = await getBackendAuth();
+    if (backendAuth instanceof Response) return backendAuth;
+
+    const proxied = await proxyAnalyzeCommit(body.url, rateLimit.meta, backendAuth);
     if (proxied) return proxied;
 
     const commitInput = parseGitHubCommitUrl(body.url);
@@ -49,13 +53,13 @@ export async function POST(request: Request) {
   }
 }
 
-async function proxyAnalyzeCommit(url: string, limitMeta: unknown): Promise<NextResponse | null> {
+async function proxyAnalyzeCommit(url: string, limitMeta: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
   const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
   if (!backendUrl) return null;
 
   const response = await fetch(`${backendUrl}/analyze-commit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuth.headers },
     body: JSON.stringify({ url }),
     cache: "no-store"
   });
@@ -69,7 +73,16 @@ async function proxyAnalyzeCommit(url: string, limitMeta: unknown): Promise<Next
   return NextResponse.json({
     ...data,
     limits: {
-      analyze: limitMeta
+      analyze: limitMeta,
+      backend: data.limits
     }
   });
+}
+
+async function getBackendAuth(): Promise<BackendAuth | Response> {
+  try {
+    return await requireBackendAuth();
+  } catch (error) {
+    return authErrorResponse(error) ?? NextResponse.json({ error: "인증 처리 중 오류가 발생했습니다." }, { status: 500 });
+  }
 }

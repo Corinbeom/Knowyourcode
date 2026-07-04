@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateAnalysis } from "@/lib/ai";
 import { fetchRepoFiles, parseGitHubUrl } from "@/lib/github";
+import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
 import type { AnalysisFocus, QuestionLevel, QuestionType } from "@/lib/types";
@@ -28,6 +29,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GitHub URL을 입력해주세요." }, { status: 400 });
     }
 
+    const backendAuth = await getBackendAuth();
+    if (backendAuth instanceof Response) return backendAuth;
+
     const focus = normalizeFocus(body.focus);
     const questionLevel = normalizeQuestionLevel(body.questionLevel);
     const questionTypes = normalizeQuestionTypes(body.questionTypes);
@@ -41,7 +45,8 @@ export async function POST(request: Request) {
         questionTypes,
         questionTargets
       },
-      rateLimit.meta
+      rateLimit.meta,
+      backendAuth
     );
     if (proxied) return proxied;
 
@@ -115,14 +120,15 @@ async function proxyAnalyzeRepo(
     questionTypes: QuestionType[];
     questionTargets: string[];
   },
-  limitMeta: unknown
+  limitMeta: unknown,
+  backendAuth: BackendAuth
 ): Promise<NextResponse | null> {
   const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
   if (!backendUrl) return null;
 
   const response = await fetch(`${backendUrl}/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuth.headers },
     body: JSON.stringify(body),
     cache: "no-store"
   });
@@ -136,7 +142,16 @@ async function proxyAnalyzeRepo(
   return NextResponse.json({
     ...data,
     limits: {
-      analyze: limitMeta
+      analyze: limitMeta,
+      backend: data.limits
     }
   });
+}
+
+async function getBackendAuth(): Promise<BackendAuth | Response> {
+  try {
+    return await requireBackendAuth();
+  } catch (error) {
+    return authErrorResponse(error) ?? NextResponse.json({ error: "인증 처리 중 오류가 발생했습니다." }, { status: 500 });
+  }
 }

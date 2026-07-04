@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.repo import AnalyzeRepoRequest, AnalyzeRepoResponse
-from app.security import rate_limiter
+from app.security import authenticated_quota_limiter
 from app.services.github_repo import fetch_repo_files, parse_github_repo_url
 from app.services.llm import generate_repo_analysis
 from app.services.repo_analysis import (
@@ -14,11 +14,11 @@ from app.services.repo_analysis import (
 )
 
 router = APIRouter()
-repo_rate_limit = rate_limiter("analyze_repo", "API_ANALYZE_REPO_LIMIT_PER_HOUR", 5)
+repo_quota_limit = authenticated_quota_limiter("analysis")
 
 
-@router.post("/analyze", response_model=AnalyzeRepoResponse, dependencies=[Depends(repo_rate_limit)])
-def analyze_repo(payload: AnalyzeRepoRequest) -> dict:
+@router.post("/analyze", response_model=AnalyzeRepoResponse)
+def analyze_repo(payload: AnalyzeRepoRequest, quota: dict = Depends(repo_quota_limit)) -> dict:
     try:
         repo = parse_github_repo_url(payload.url)
         files = fetch_repo_files(repo)
@@ -33,7 +33,7 @@ def analyze_repo(payload: AnalyzeRepoRequest) -> dict:
         context = build_repo_static_context(repo, files, focus, question_level, question_types, question_targets)
         fallback = build_fallback_repo_analysis(context)
         analysis = generate_repo_analysis(context, fallback)
-        return {"analysis": analysis}
+        return {"analysis": analysis, "limits": quota.get("analysis")}
     except HTTPException:
         raise
     except ValueError as exc:

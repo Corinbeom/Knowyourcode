@@ -8,33 +8,33 @@ from app.schemas.evaluation import (
     EvaluateQuizRequest,
     EvaluateQuizResponse,
 )
-from app.security import rate_limiter
+from app.security import authenticated_quota_limiter
 from app.services.evaluation import evaluate_answer, evaluate_quiz
 
 router = APIRouter()
-evaluate_rate_limit = rate_limiter("evaluate", "API_EVALUATE_LIMIT_PER_HOUR", 10)
+evaluate_quota_limit = authenticated_quota_limiter("evaluation")
 
 
-@router.post("/evaluate", response_model=EvaluateAnswerResponse, dependencies=[Depends(evaluate_rate_limit)])
-def evaluate_single_answer(payload: EvaluateAnswerRequest) -> dict:
+@router.post("/evaluate", response_model=EvaluateAnswerResponse)
+def evaluate_single_answer(payload: EvaluateAnswerRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
     answer = payload.answer.strip()
     validate_answer(answer)
     try:
-        return {"evaluation": evaluate_answer(payload.analysis, payload.questionId, answer)}
+        return {"evaluation": evaluate_answer(payload.analysis, payload.questionId, answer), "limits": quota.get("evaluation")}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/evaluate-quiz", response_model=EvaluateQuizResponse, dependencies=[Depends(evaluate_rate_limit)])
-def evaluate_repo_quiz(payload: EvaluateQuizRequest) -> dict:
+@router.post("/evaluate-quiz", response_model=EvaluateQuizResponse)
+def evaluate_repo_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
     answers = normalize_answers(payload.analysis, payload.answers)
-    return {"evaluation": evaluate_quiz(payload.analysis, answers)}
+    return {"evaluation": evaluate_quiz(payload.analysis, answers), "limits": quota.get("evaluation")}
 
 
-@router.post("/evaluate-commit-quiz", response_model=EvaluateQuizResponse, dependencies=[Depends(evaluate_rate_limit)])
-def evaluate_commit_quiz(payload: EvaluateQuizRequest) -> dict:
+@router.post("/evaluate-commit-quiz", response_model=EvaluateQuizResponse)
+def evaluate_commit_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
     answers = normalize_answers(payload.analysis, payload.answers)
-    return {"evaluation": evaluate_quiz(payload.analysis, answers, commit_mode=True)}
+    return {"evaluation": evaluate_quiz(payload.analysis, answers, commit_mode=True), "limits": quota.get("evaluation")}
 
 
 def validate_answer(answer: str) -> None:

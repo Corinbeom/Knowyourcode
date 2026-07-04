@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
+import { AuthButton } from "./auth-button";
 import { TallyFeedbackButton } from "./tally-feedback-button";
 
 const CORE_QUESTIONS = [
@@ -412,6 +413,7 @@ function SiteNav({ onStartClick }: { onStartClick: () => void }) {
           <span className="nav-dot" />
           Public repo analysis
           <button type="button" onClick={onStartClick}>테스트 시작</button>
+          <AuthButton />
         </div>
       </div>
     </nav>

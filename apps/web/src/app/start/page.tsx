@@ -1,9 +1,12 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn, useSession } from "next-auth/react";
 import { track } from "@vercel/analytics";
 import { DEFAULT_QUESTION_TYPES, saveAnalysisSetup } from "@/lib/analysis-session";
+import { effectiveRemaining, formatResetTime, type QuotaStatus } from "@/lib/quota";
+import { AuthButton } from "../auth-button";
 
 type StartMode = "project" | "commit";
 
@@ -35,14 +38,51 @@ const MODE_GUIDES = {
 
 export default function StartPage() {
   const router = useRouter();
+  const { data: session, status } = useSession();
   const [mode, setMode] = useState<StartMode>("project");
   const [url, setUrl] = useState("");
+  const [quota, setQuota] = useState<QuotaStatus | null>(null);
+  const [quotaError, setQuotaError] = useState("");
   const guide = MODE_GUIDES[mode];
+  const analysisRemaining = effectiveRemaining(quota?.analysis);
+  const isQuotaExhausted = analysisRemaining !== null && analysisRemaining <= 0;
+
+  useEffect(() => {
+    if (!session?.user?.githubId) {
+      setQuota(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetch("/api/quota", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "사용량 정보를 가져오지 못했습니다.");
+        if (!cancelled) {
+          setQuota(data.limits);
+          setQuotaError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setQuotaError(error instanceof Error ? error.message : "사용량 정보를 가져오지 못했습니다.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.githubId]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedUrl = url.trim();
     if (!trimmedUrl) return;
+
+    if (!session?.user?.githubId) {
+      track("login_required", { source: "start", mode });
+      signIn("github");
+      return;
+    }
+    if (isQuotaExhausted) return;
 
     if (mode === "commit") {
       track("commit_submitted", { source: "start" });
@@ -114,13 +154,28 @@ export default function StartPage() {
               />
             </div>
             {mode === "commit" ? <CommitUrlHelp /> : <ProjectModeHelp />}
-            <button className="primary-button" type="submit" disabled={!url.trim()}>
-              {guide.button}
+            <QuotaNotice quota={quota} error={quotaError} />
+            <button className="primary-button" type="submit" disabled={!url.trim() || isQuotaExhausted}>
+              {isQuotaExhausted ? "오늘 분석 가능 횟수를 모두 사용했습니다" : status === "authenticated" ? guide.button : "GitHub 로그인 후 시작 →"}
             </button>
           </form>
         </div>
       </section>
     </main>
+  );
+}
+
+function QuotaNotice({ quota, error }: { quota: QuotaStatus | null; error: string }) {
+  if (error) return <p className="quota-notice is-warning">{error}</p>;
+  const remaining = effectiveRemaining(quota?.analysis);
+  if (remaining === null) {
+    return <p className="quota-notice">GitHub 로그인 후 오늘 남은 분석 횟수를 확인할 수 있습니다.</p>;
+  }
+
+  return (
+    <p className={remaining <= 0 ? "quota-notice is-warning" : "quota-notice"}>
+      오늘 남은 분석 {remaining}회 · {formatResetTime(quota?.analysis.user.resetAt)} 초기화
+    </p>
   );
 }
 
@@ -182,6 +237,7 @@ function SiteNav() {
           <span className="brand__mark">KYC</span>
           <span>KnowYourCode</span>
         </button>
+        <AuthButton />
       </div>
     </nav>
   );

@@ -45,7 +45,9 @@ class QuizEvaluationResult(BaseModel):
 
 class EvaluateAnswerResponse(BaseModel):
     evaluation: EvaluationResult
+    limits: dict | None = None
 
 
 class EvaluateQuizResponse(BaseModel):
     evaluation: QuizEvaluationResult
+    limits: dict | None = None

@@ -2,17 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn, useSession } from "next-auth/react";
+import { AuthButton } from "../auth-button";
 import {
   DEFAULT_QUESTION_TYPES,
   type AnalysisSetup,
   loadAnalysisSetup,
   saveAnalysisSetup
 } from "@/lib/analysis-session";
+import { effectiveRemaining, formatResetTime, type QuotaStatus } from "@/lib/quota";
 import type { AnalysisFocus, QuestionLevel, QuestionType } from "@/lib/types";
 
 export default function SetupPage() {
   const router = useRouter();
+  const { data: session, status } = useSession();
   const [setup, setSetup] = useState<AnalysisSetup | null>(null);
+  const [quota, setQuota] = useState<QuotaStatus | null>(null);
+  const [quotaError, setQuotaError] = useState("");
+  const analysisRemaining = effectiveRemaining(quota?.analysis);
+  const isQuotaExhausted = analysisRemaining !== null && analysisRemaining <= 0;
 
   useEffect(() => {
     const stored = loadAnalysisSetup();
@@ -23,6 +31,31 @@ export default function SetupPage() {
     setSetup(stored);
   }, [router]);
 
+  useEffect(() => {
+    if (!session?.user?.githubId) {
+      setQuota(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetch("/api/quota", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "사용량 정보를 가져오지 못했습니다.");
+        if (!cancelled) {
+          setQuota(data.limits);
+          setQuotaError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setQuotaError(error instanceof Error ? error.message : "사용량 정보를 가져오지 못했습니다.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.githubId]);
+
   if (!setup) return null;
 
   function updateSetup(next: Partial<AnalysisSetup>) {
@@ -31,6 +64,11 @@ export default function SetupPage() {
 
   function handleAnalyze() {
     if (!setup?.url) return;
+    if (!session?.user?.githubId) {
+      signIn("github");
+      return;
+    }
+    if (isQuotaExhausted) return;
     saveAnalysisSetup(setup);
     router.push("/analyzing");
   }
@@ -137,15 +175,30 @@ export default function SetupPage() {
         </section>
 
         <div className="setup-actions">
+          <QuotaNotice quota={quota} error={quotaError} />
           <button className="secondary-button" type="button" onClick={() => router.push("/")}>
             저장소 다시 입력
           </button>
-          <button className="primary-button" type="button" onClick={handleAnalyze}>
-            분석 시작 →
+          <button className="primary-button" type="button" onClick={handleAnalyze} disabled={isQuotaExhausted}>
+            {isQuotaExhausted ? "오늘 분석 가능 횟수를 모두 사용했습니다" : status === "authenticated" ? "분석 시작 →" : "GitHub 로그인 후 분석 시작 →"}
           </button>
         </div>
       </section>
     </main>
+  );
+}
+
+function QuotaNotice({ quota, error }: { quota: QuotaStatus | null; error: string }) {
+  if (error) return <p className="quota-notice is-warning">{error}</p>;
+  const remaining = effectiveRemaining(quota?.analysis);
+  if (remaining === null) {
+    return <p className="quota-notice">GitHub 로그인 후 오늘 남은 분석 횟수를 확인할 수 있습니다.</p>;
+  }
+
+  return (
+    <p className={remaining <= 0 ? "quota-notice is-warning" : "quota-notice"}>
+      오늘 남은 분석 {remaining}회 · {formatResetTime(quota?.analysis.user.resetAt)} 초기화
+    </p>
   );
 }
 
@@ -243,6 +296,7 @@ function SiteNav() {
           <span className="brand__mark">KYC</span>
           <span>KnowYourCode</span>
         </div>
+        <AuthButton />
       </div>
     </nav>
   );

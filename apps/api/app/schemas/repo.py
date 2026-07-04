@@ -70,3 +70,4 @@ class RepoAnalysisResult(BaseModel):
 
 class AnalyzeRepoResponse(BaseModel):
     analysis: RepoAnalysisResult
+    limits: dict | None = None
