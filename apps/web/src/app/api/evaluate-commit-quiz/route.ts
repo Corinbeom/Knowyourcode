@@ -10,12 +10,6 @@ const MAX_ANSWER_LENGTH = Number(process.env.MAX_ANSWER_LENGTH ?? 4000);
 
 export async function POST(request: Request) {
   try {
-    const rateLimit = consumeRateLimit(request, {
-      namespace: "evaluate-commit",
-      limit: EVALUATE_LIMIT_PER_HOUR
-    });
-    if (rateLimit.response) return rateLimit.response;
-
     const body = (await request.json()) as {
       analysis?: CommitAnalysisResult;
       answers?: QuizAnswer[];
@@ -56,8 +50,14 @@ export async function POST(request: Request) {
     const proxied = await proxyEvaluation("evaluate-commit-quiz", {
       analysis: body.analysis,
       answers
-    }, rateLimit.meta, backendAuth);
+    }, backendAuth);
     if (proxied) return proxied;
+
+    const rateLimit = consumeRateLimit(request, {
+      namespace: "evaluate-commit",
+      limit: EVALUATE_LIMIT_PER_HOUR
+    });
+    if (rateLimit.response) return rateLimit.response;
 
     const evaluation = await evaluateCommitQuiz({
       analysis: body.analysis,
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
+async function proxyEvaluation(path: string, body: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
   const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
   if (!backendUrl) return null;
 
@@ -88,7 +88,7 @@ async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown, 
     return NextResponse.json({ error: message }, { status: response.status });
   }
 
-  return NextResponse.json({ ...data, limits: { evaluate: limitMeta, backend: data.limits } });
+  return NextResponse.json({ ...data, limits: { backend: data.limits } });
 }
 
 async function getBackendAuth(): Promise<BackendAuth | Response> {

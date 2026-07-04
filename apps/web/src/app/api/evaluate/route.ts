@@ -10,12 +10,6 @@ const MAX_ANSWER_LENGTH = Number(process.env.MAX_ANSWER_LENGTH ?? 4000);
 
 export async function POST(request: Request) {
   try {
-    const rateLimit = consumeRateLimit(request, {
-      namespace: "evaluate",
-      limit: EVALUATE_LIMIT_PER_HOUR
-    });
-    if (rateLimit.response) return rateLimit.response;
-
     const body = (await request.json()) as {
       analysis?: AnalysisResult;
       questionId?: string;
@@ -43,8 +37,14 @@ export async function POST(request: Request) {
       analysis: body.analysis,
       questionId: body.questionId,
       answer: body.answer.trim()
-    }, rateLimit.meta, backendAuth);
+    }, backendAuth);
     if (proxied) return proxied;
+
+    const rateLimit = consumeRateLimit(request, {
+      namespace: "evaluate",
+      limit: EVALUATE_LIMIT_PER_HOUR
+    });
+    if (rateLimit.response) return rateLimit.response;
 
     const evaluation = await evaluateAnswer({
       analysis: body.analysis,
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
+async function proxyEvaluation(path: string, body: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
   const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
   if (!backendUrl) return null;
 
@@ -76,7 +76,7 @@ async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown, 
     return NextResponse.json({ error: message }, { status: response.status });
   }
 
-  return NextResponse.json({ ...data, limits: { evaluate: limitMeta, backend: data.limits } });
+  return NextResponse.json({ ...data, limits: { backend: data.limits } });
 }
 
 async function getBackendAuth(): Promise<BackendAuth | Response> {
