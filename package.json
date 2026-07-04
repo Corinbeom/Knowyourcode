@@ -2,27 +2,15 @@
   "name": "knowyourcode",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@vercel/analytics": "^2.0.1",
-    "adm-zip": "^0.5.16",
-    "next": "^15.3.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
-  "devDependencies": {
-    "@types/adm-zip": "^0.5.7",
-    "@types/node": "^22.15.30",
-    "@types/react": "^19.0.12",
-    "@types/react-dom": "^19.0.4",
-    "eslint": "^9.28.0",
-    "eslint-config-next": "^15.3.4",
-    "typescript": "^5.8.3"
+    "dev": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/web",
+    "start": "npm run start -w apps/web",
+    "lint": "npm run lint -w apps/web",
+    "typecheck": "npm run typecheck -w apps/web",
+    "api:dev": "uvicorn app.main:app --reload --app-dir apps/api"
   }
 }
