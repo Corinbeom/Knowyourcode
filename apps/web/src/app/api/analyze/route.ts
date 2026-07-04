@@ -32,6 +32,19 @@ export async function POST(request: Request) {
     const questionLevel = normalizeQuestionLevel(body.questionLevel);
     const questionTypes = normalizeQuestionTypes(body.questionTypes);
     const questionTargets = normalizeQuestionTargets(body.questionTargets);
+
+    const proxied = await proxyAnalyzeRepo(
+      {
+        url: body.url,
+        focus,
+        questionLevel,
+        questionTypes,
+        questionTargets
+      },
+      rateLimit.meta
+    );
+    if (proxied) return proxied;
+
     const repo = parseGitHubUrl(body.url);
     const files = await fetchRepoFiles(repo);
 
@@ -92,4 +105,38 @@ function normalizeQuestionTargets(input: string[] | string | undefined): string[
     .map((target) => target.slice(0, 32))
     .filter((target, index, targets) => targets.indexOf(target) === index)
     .slice(0, 5);
+}
+
+async function proxyAnalyzeRepo(
+  body: {
+    url: string;
+    focus: AnalysisFocus;
+    questionLevel: QuestionLevel;
+    questionTypes: QuestionType[];
+    questionTargets: string[];
+  },
+  limitMeta: unknown
+): Promise<NextResponse | null> {
+  const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+  if (!backendUrl) return null;
+
+  const response = await fetch(`${backendUrl}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store"
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = typeof data.detail === "string" ? data.detail : data.error ?? "분석 중 오류가 발생했습니다.";
+    return NextResponse.json({ error: message }, { status: response.status });
+  }
+
+  return NextResponse.json({
+    ...data,
+    limits: {
+      analyze: limitMeta
+    }
+  });
 }

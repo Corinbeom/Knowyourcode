@@ -49,6 +49,12 @@ export async function POST(request: Request) {
       );
     }
 
+    const proxied = await proxyEvaluation("evaluate-quiz", {
+      analysis: body.analysis,
+      answers
+    }, rateLimit.meta);
+    if (proxied) return proxied;
+
     const evaluation = await evaluateQuiz({
       analysis: body.analysis,
       answers
@@ -59,4 +65,24 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "퀴즈 평가 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+async function proxyEvaluation(path: string, body: unknown, limitMeta: unknown): Promise<NextResponse | null> {
+  const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+  if (!backendUrl) return null;
+
+  const response = await fetch(`${backendUrl}/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store"
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = typeof data.detail === "string" ? data.detail : data.error ?? "퀴즈 평가 중 오류가 발생했습니다.";
+    return NextResponse.json({ error: message }, { status: response.status });
+  }
+
+  return NextResponse.json({ ...data, limits: { evaluate: limitMeta } });
 }

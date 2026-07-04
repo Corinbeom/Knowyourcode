@@ -37,7 +37,10 @@ cp apps/api/.env.example apps/api/.env.local
 API_ENV=production
 API_DOCS_ENABLED=false
 API_ALLOWED_ORIGINS=https://knowyourcode.cloud,https://www.knowyourcode.cloud,https://knowyourcode.vercel.app
+API_ANALYZE_REPO_LIMIT_PER_HOUR=5
 API_ANALYZE_COMMIT_LIMIT_PER_HOUR=5
+API_EVALUATE_LIMIT_PER_HOUR=10
+REDIS_URL=redis://127.0.0.1:6379/0
 AI_PROVIDER=gemini
 GEMINI_API_KEY=...
 ```
@@ -130,6 +133,7 @@ python -m py_compile apps/api/app/main.py apps/api/app/api/commit.py apps/api/ap
 - 운영 환경에서는 CORS origin, rate limit, API key 사용량 제한을 별도로 강화해야 합니다.
 - 운영 FastAPI에서는 `API_ENV=production`, `API_DOCS_ENABLED=false`로 `/docs`, `/redoc`, `/openapi.json`을 비공개 처리합니다.
 - Nginx에서는 `.env`, `.git` 같은 민감 경로를 FastAPI까지 넘기지 않고 차단하는 것을 권장합니다.
+- `REDIS_URL`이 설정되면 API rate limit은 Redis를 사용하고, 없으면 단일 프로세스 메모리 limiter로 동작합니다.
 
 ### API CI/CD
 
