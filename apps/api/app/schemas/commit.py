@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AnalyzeCommitRequest(BaseModel):
@@ -30,6 +30,15 @@ class FileSummary(BaseModel):
     excerpt: str = ""
 
 
+class CodeEvidence(BaseModel):
+    id: str
+    path: str
+    title: str
+    reason: str
+    excerpt: str = ""
+    kind: str = "changed"
+
+
 class CommitReport(BaseModel):
     oneLineSummary: str
     changeIntent: str
@@ -44,6 +53,7 @@ class CommitQuestion(BaseModel):
     type: Literal["변경 의도", "변경 영향도", "테스트/리스크", "리뷰형"]
     question: str
     relatedFiles: list[str]
+    evidenceSnippets: list[CodeEvidence] = Field(default_factory=list)
 
 
 class CommitAnalysisResult(BaseModel):
@@ -56,6 +66,7 @@ class CommitAnalysisResult(BaseModel):
     report: CommitReport
     questions: list[CommitQuestion]
     contextFiles: list[FileSummary]
+    evidenceSnippets: list[CodeEvidence] = Field(default_factory=list)
 
 
 class AnalyzeCommitResponse(BaseModel):

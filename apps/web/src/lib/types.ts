@@ -21,6 +21,15 @@ export type FileSummary = {
   excerpt: string;
 };
 
+export type CodeEvidence = {
+  id: string;
+  path: string;
+  title: string;
+  reason: string;
+  excerpt: string;
+  kind: string;
+};
+
 export type ProjectReport = {
   oneLineSummary: string;
   techStack: string[];
@@ -70,6 +79,7 @@ export type CommitQuestion = {
   type: CommitQuestionType;
   question: string;
   relatedFiles: string[];
+  evidenceSnippets?: CodeEvidence[];
 };
 
 export type CommitReport = {
@@ -91,6 +101,7 @@ export type CommitAnalysisResult = {
   report: CommitReport;
   questions: CommitQuestion[];
   contextFiles: FileSummary[];
+  evidenceSnippets?: CodeEvidence[];
 };
 
 export type AnalysisResult = {

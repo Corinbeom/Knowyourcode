@@ -9,7 +9,7 @@ import {
   saveCommitQuizSession,
   type QuizSession
 } from "@/lib/analysis-session";
-import type { CommitAnalysisResult, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
+import type { CodeEvidence, CommitAnalysisResult, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
 
 type QuizState = "answering" | "evaluating" | "error";
 
@@ -118,105 +118,107 @@ export default function CommitQuizPage() {
   if (!analysis || !currentQuestion) return null;
 
   const isLastQuestion = currentIndex === analysis.questions.length - 1;
-  const relatedSnippets = getRelatedSnippets(analysis.contextFiles, currentQuestion.relatedFiles);
-  const selectedSnippet = selectedSnippetPath ? relatedSnippets.find((snippet) => snippet.path === selectedSnippetPath) ?? null : null;
+  const relatedSnippets = getRelatedSnippets(currentQuestion.evidenceSnippets, analysis.contextFiles, currentQuestion.relatedFiles);
+  const selectedSnippet = selectedSnippetPath ? relatedSnippets.find((snippet) => snippet.id === selectedSnippetPath || snippet.path === selectedSnippetPath) ?? null : null;
 
   return (
     <main>
       <SiteNav />
-      <section className="quiz-page">
-        <div className="quiz-header">
-          <div>
-            <p className="section-label">Commit Mode</p>
-            <h1>{analysis.commit.repo}@{analysis.commit.shortSha}</h1>
-            <p>이번 커밋의 변경 의도, 영향 범위, 테스트 리스크를 직접 설명해보세요.</p>
-          </div>
-          <div className="quiz-counter">
-            <strong>{currentIndex + 1}</strong>
-            <span>/ {analysis.questions.length}</span>
-          </div>
-        </div>
-
-        <div className="quiz-progress" aria-label={`진행률 ${progress}%`}>
-          <span style={{ width: `${progress}%` }} />
-        </div>
-
-        <div className={selectedSnippet ? "quiz-workspace is-code-open" : "quiz-workspace"}>
-          <form className="quiz-card" onSubmit={handleSubmit}>
-            <div className="quiz-question">
-              <div className="quiz-question__meta">
-                <span>{currentQuestion.type}</span>
-                <span>{answeredCount}/{analysis.questions.length} 답변 완료</span>
+      <section className={selectedSnippet ? "quiz-page is-code-open" : "quiz-page"}>
+        <div className={selectedSnippet ? "quiz-shell is-code-open" : "quiz-shell"}>
+          <div className="quiz-main-column">
+            <div className="quiz-header">
+              <div>
+                <p className="section-label">Commit Mode</p>
+                <h1>{analysis.commit.repo}@{analysis.commit.shortSha}</h1>
+                <p>이번 커밋의 변경 의도, 영향 범위, 테스트 리스크를 직접 설명해보세요.</p>
               </div>
-              <h2>{currentQuestion.question}</h2>
+              <div className="quiz-counter">
+                <strong>{currentIndex + 1}</strong>
+                <span>/ {analysis.questions.length}</span>
+              </div>
             </div>
 
-            <aside className="quiz-related">
-              <p className="section-label">관련 변경 파일</p>
-              <ul>
-                {currentQuestion.relatedFiles.map((file) => (
-                  <li key={file}>
-                    <button
-                      type="button"
-                      className={isSelectedRelatedFile(selectedSnippet?.path, file) ? "is-active" : ""}
-                      onClick={() => setSelectedSnippetPath(resolveSnippetPath(relatedSnippets, file))}
-                    >
-                      {file}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </aside>
+            <div className="quiz-progress" aria-label={`진행률 ${progress}%`}>
+              <span style={{ width: `${progress}%` }} />
+            </div>
 
-            <label className="quiz-answer" htmlFor="commitQuizAnswer">
-              <span>내 답변</span>
-              <textarea
-                id="commitQuizAnswer"
-                value={answerDraft}
-                onChange={(event) => {
-                  setAnswerDraft(event.target.value);
-                  if (quizState === "error") {
-                    setQuizState("answering");
-                    setError("");
-                  }
-                }}
-                placeholder="커밋 메시지, 변경 파일, 영향 범위, 테스트 관점을 연결해서 답변해보세요."
-                maxLength={4000}
-                disabled={quizState === "evaluating"}
-              />
-            </label>
+            <form className="quiz-card" onSubmit={handleSubmit}>
+              <div className="quiz-question">
+                <div className="quiz-question__meta">
+                  <span>{currentQuestion.type}</span>
+                  <span>{answeredCount}/{analysis.questions.length} 답변 완료</span>
+                </div>
+                <h2>{currentQuestion.question}</h2>
+              </div>
 
-            {quizState === "evaluating" ? (
-              <div className="evaluation-loading">
-                <span className="evaluation-loading__spinner" aria-hidden="true" />
+              <aside className="quiz-related">
+                <p className="section-label">관련 변경 파일</p>
+                <ul>
+                  {relatedSnippets.map((snippet) => (
+                    <li key={snippet.id}>
+                      <button
+                        type="button"
+                        className={selectedSnippet?.id === snippet.id ? "is-active" : ""}
+                        onClick={() => setSelectedSnippetPath(snippet.id)}
+                      >
+                        {snippet.title || snippet.path}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+
+              <label className="quiz-answer" htmlFor="commitQuizAnswer">
+                <span>내 답변</span>
+                <textarea
+                  id="commitQuizAnswer"
+                  value={answerDraft}
+                  onChange={(event) => {
+                    setAnswerDraft(event.target.value);
+                    if (quizState === "error") {
+                      setQuizState("answering");
+                      setError("");
+                    }
+                  }}
+                  placeholder="커밋 메시지, 변경 파일, 영향 범위, 테스트 관점을 연결해서 답변해보세요."
+                  maxLength={4000}
+                  disabled={quizState === "evaluating"}
+                />
+              </label>
+
+              {quizState === "evaluating" ? (
+                <div className="evaluation-loading">
+                  <span className="evaluation-loading__spinner" aria-hidden="true" />
+                  <div>
+                    <strong>커밋 답변을 diff 근거로 평가하는 중입니다</strong>
+                    <p>변경 의도, 영향 범위, 테스트 리스크를 문항별로 정리하고 있습니다.</p>
+                  </div>
+                </div>
+              ) : null}
+              {quizState === "error" ? <p className="error">{error}</p> : null}
+
+              <div className="quiz-actions">
+                <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={quizState === "evaluating"}>
+                  처음으로
+                </button>
                 <div>
-                  <strong>커밋 답변을 diff 근거로 평가하는 중입니다</strong>
-                  <p>변경 의도, 영향 범위, 테스트 리스크를 문항별로 정리하고 있습니다.</p>
+                  <button className="secondary-button" type="button" onClick={() => moveTo(currentIndex - 1)} disabled={currentIndex === 0 || quizState === "evaluating"}>
+                    이전
+                  </button>
+                  <button className="primary-button" type={isLastQuestion ? "submit" : "button"} onClick={isLastQuestion ? undefined : () => {
+                    if (!currentQuestion || !answerDraft.trim()) return;
+                    const nextAnswers = upsertAnswer(currentQuestion.id, answerDraft.trim());
+                    setAnswers(nextAnswers);
+                    moveTo(currentIndex + 1, nextAnswers);
+                  }} disabled={!answerDraft.trim() || quizState === "evaluating"}>
+                    {quizState === "evaluating" ? "평가 중" : quizState === "error" ? "다시 평가하기 →" : isLastQuestion ? "결과 보기 →" : "다음 →"}
+                  </button>
                 </div>
               </div>
-            ) : null}
-            {quizState === "error" ? <p className="error">{error}</p> : null}
-
-            <div className="quiz-actions">
-              <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={quizState === "evaluating"}>
-                처음으로
-              </button>
-              <div>
-                <button className="secondary-button" type="button" onClick={() => moveTo(currentIndex - 1)} disabled={currentIndex === 0 || quizState === "evaluating"}>
-                  이전
-                </button>
-                <button className="primary-button" type={isLastQuestion ? "submit" : "button"} onClick={isLastQuestion ? undefined : () => {
-                  if (!currentQuestion || !answerDraft.trim()) return;
-                  const nextAnswers = upsertAnswer(currentQuestion.id, answerDraft.trim());
-                  setAnswers(nextAnswers);
-                  moveTo(currentIndex + 1, nextAnswers);
-                }} disabled={!answerDraft.trim() || quizState === "evaluating"}>
-                  {quizState === "evaluating" ? "평가 중" : quizState === "error" ? "다시 평가하기 →" : isLastQuestion ? "결과 보기 →" : "다음 →"}
-                </button>
-              </div>
-            </div>
-            <p className="usage-note">Commit Mode는 마지막에 한 번만 평가 API를 호출합니다.</p>
-          </form>
+              <p className="usage-note">Commit Mode는 마지막에 한 번만 평가 API를 호출합니다.</p>
+            </form>
+          </div>
           {selectedSnippet ? (
             <CodePanel snippet={selectedSnippet} title="변경 코드 미리보기" onClose={() => setSelectedSnippetPath(null)} />
           ) : null}
@@ -236,7 +238,7 @@ function CodePanel({
   title,
   onClose
 }: {
-  snippet: { path: string; reason: string; excerpt: string };
+  snippet: CodeEvidence;
   title: string;
   onClose: () => void;
 }) {
@@ -263,24 +265,28 @@ function CodePanel({
 }
 
 function getRelatedSnippets(
+  evidenceSnippets: CodeEvidence[] | undefined,
   contextFiles: Array<{ path: string; reason: string; excerpt: string }>,
   relatedFiles: string[]
-) {
-  const snippets = relatedFiles.map((path) => {
+) : CodeEvidence[] {
+  if (evidenceSnippets?.length) {
+    return [...new Map(evidenceSnippets.map((snippet) => [snippet.id, snippet])).values()].slice(0, 3);
+  }
+
+  const snippets: CodeEvidence[] = relatedFiles.map((path) => {
     const matched = contextFiles.find((file) => file.path === path) ?? contextFiles.find((file) => file.path.endsWith(path) || path.endsWith(file.path));
-    return matched ?? { path, reason: "관련 변경 파일로 제시되었지만 diff 미리보기는 제공되지 않았습니다.", excerpt: "" };
+    const fallback = matched ?? { path, reason: "관련 변경 파일로 제시되었지만 diff 미리보기는 제공되지 않았습니다.", excerpt: "" };
+    return {
+      id: fallback.path,
+      path: fallback.path,
+      title: fallback.path,
+      reason: fallback.reason,
+      excerpt: fallback.excerpt,
+      kind: "changed"
+    };
   });
 
   return [...new Map(snippets.map((file) => [file.path, file])).values()].slice(0, 3);
-}
-
-function resolveSnippetPath(snippets: Array<{ path: string }>, relatedFile: string): string {
-  return snippets.find((snippet) => isSelectedRelatedFile(snippet.path, relatedFile))?.path ?? relatedFile;
-}
-
-function isSelectedRelatedFile(snippetPath: string | undefined, relatedFile: string): boolean {
-  if (!snippetPath) return false;
-  return snippetPath === relatedFile || snippetPath.endsWith(relatedFile) || relatedFile.endsWith(snippetPath);
 }
 
 function SiteNav() {

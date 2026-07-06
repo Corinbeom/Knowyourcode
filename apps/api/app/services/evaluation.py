@@ -11,12 +11,13 @@ def evaluate_answer(analysis: dict, question_id: str, answer: str) -> dict:
     if not question:
         raise ValueError("평가할 질문을 찾을 수 없습니다.")
 
-    related_files = pick_related_files(
+    related_files = pick_question_evidence_or_files(
+        question,
         analysis.get("contextFiles", []),
-        question.get("relatedFiles", []),
         f"{question.get('question', '')}\n{answer}",
     )
-    fallback = build_fallback_evaluation(answer, question.get("relatedFiles", []))
+    fallback_related_paths = [file.get("path", "") for file in related_files if file.get("path")] or question.get("relatedFiles", [])
+    fallback = build_fallback_evaluation(answer, fallback_related_paths)
 
     prompt = f"""You are KnowYourCode, evaluating whether a user understands their own code.
 Evaluate in Korean and return JSON only.
@@ -67,9 +68,9 @@ def evaluate_quiz(analysis: dict, answers: list[dict], commit_mode: bool = False
         for question in questions
     ]
     fallback = build_fallback_quiz_evaluation(analysis, answers, commit_mode)
-    related_files = pick_related_files(
+    related_files = pick_quiz_evidence_or_files(
+        questions,
         analysis.get("contextFiles", []),
-        [path for question in questions for path in question.get("relatedFiles", [])],
         "\n".join(f"{item['question'].get('question', '')}\n{item['answer']}" for item in answers_by_question),
     )
     summary_label = "Commit summary" if commit_mode else "Project summary"
@@ -137,6 +138,48 @@ def format_answers(items: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def pick_question_evidence_or_files(question: dict, context_files: list[dict], search_text: str) -> list[dict]:
+    evidence_files = evidence_to_files(question.get("evidenceSnippets", []))
+    if evidence_files:
+        return evidence_files[:8]
+    return pick_related_files(context_files, question.get("relatedFiles", []), search_text)
+
+
+def pick_quiz_evidence_or_files(questions: list[dict], context_files: list[dict], search_text: str) -> list[dict]:
+    evidence_files = dedupe_files(
+        file
+        for question in questions
+        for file in evidence_to_files(question.get("evidenceSnippets", []))
+    )
+    if evidence_files:
+        return evidence_files[:10]
+    return pick_related_files(
+        context_files,
+        [path for question in questions for path in question.get("relatedFiles", [])],
+        search_text,
+    )
+
+
+def evidence_to_files(snippets: object) -> list[dict]:
+    if not isinstance(snippets, list):
+        return []
+    files = []
+    for snippet in snippets:
+        if not isinstance(snippet, dict):
+            continue
+        path = str(snippet.get("path") or "")
+        if not path:
+            continue
+        files.append(
+            {
+                "path": path,
+                "reason": str(snippet.get("reason") or snippet.get("title") or "질문 답변에 필요한 변경 근거입니다."),
+                "excerpt": str(snippet.get("excerpt") or ""),
+            }
+        )
+    return files
+
+
 def pick_related_files(files: list[dict], related_paths: list[str], search_text: str) -> list[dict]:
     terms = extract_search_terms(search_text)
     scored = []
@@ -199,7 +242,7 @@ def build_fallback_quiz_evaluation(analysis: dict, answers: list[dict], commit_m
     question_evaluations = []
     for question in analysis.get("questions", []):
         answer = next((item.get("answer", "") for item in answers if item.get("questionId") == question.get("id")), "")
-        question_evaluations.append({"questionId": question.get("id"), **build_fallback_evaluation(answer, question.get("relatedFiles", []))})
+        question_evaluations.append({"questionId": question.get("id"), **build_fallback_evaluation(answer, question_related_paths(question))})
     average = round(sum(item["score"] for item in question_evaluations) / max(len(question_evaluations), 1))
     review_files = list(dict.fromkeys(path for item in question_evaluations for path in item["reviewCode"]))[:8]
     return {
@@ -227,6 +270,15 @@ def normalize_evaluation(value: object, fallback: dict) -> dict:
         "interviewAnswerDirection": str(value.get("interviewAnswerDirection") or fallback["interviewAnswerDirection"]),
         "followUpQuestion": str(value.get("followUpQuestion") or fallback["followUpQuestion"]),
     }
+
+
+def question_related_paths(question: dict) -> list[str]:
+    evidence_paths = [
+        snippet.get("path")
+        for snippet in question.get("evidenceSnippets", [])
+        if isinstance(snippet, dict) and snippet.get("path")
+    ]
+    return list(dict.fromkeys(evidence_paths or question.get("relatedFiles", [])))
 
 
 def normalize_quiz_evaluation(value: object, fallback: dict, questions: list[dict]) -> dict:
