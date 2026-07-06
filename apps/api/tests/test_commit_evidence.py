@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from app.services.commit_analysis import (
     build_commit_evidence_snippets,
@@ -6,7 +7,7 @@ from app.services.commit_analysis import (
     build_fallback_commit_analysis,
     split_patch_hunks,
 )
-from app.services.llm import normalize_commit_questions
+from app.services.llm import is_question_evidence_aligned, normalize_commit_questions, refine_commit_question_evidence
 
 
 def sample_commit_changes(files):
@@ -105,6 +106,74 @@ class CommitEvidenceTest(unittest.TestCase):
 
         self.assertEqual(len(analysis["questions"]), 4)
         self.assertTrue(all(question["evidenceSnippets"] for question in analysis["questions"]))
+
+    def test_refine_reselects_evidence_when_question_path_mismatches(self):
+        route_evidence = {
+            "id": "apps-web-src-app-api-evaluate-commit-quiz-route.ts:0",
+            "path": "apps/web/src/app/api/evaluate-commit-quiz/route.ts",
+            "title": "apps/web/src/app/api/evaluate-commit-quiz/route.ts @@ route @@",
+            "reason": "커밋 퀴즈 평가 API 변경입니다.",
+            "excerpt": "const rateLimit = consumeRateLimit(request, { namespace: \"evaluate-commit\" });",
+            "kind": "modified",
+        }
+        ai_evidence = {
+            "id": "apps-web-src-lib-ai.ts:0",
+            "path": "apps/web/src/lib/ai.ts",
+            "title": "apps/web/src/lib/ai.ts @@ evaluateCommitQuiz @@",
+            "reason": "평가 프롬프트 변경입니다.",
+            "excerpt": "export async function evaluateCommitQuiz() {}",
+            "kind": "modified",
+        }
+        question = {
+            "id": "q1",
+            "type": "리뷰형",
+            "question": "apps/web/src/app/api/evaluate-commit-quiz/route.ts에서 rate limit 적용 방식은 어떤가요?",
+            "relatedFiles": ["apps/web/src/app/api/evaluate-commit-quiz/route.ts"],
+            "evidenceSnippets": [ai_evidence],
+        }
+        fallback = [{**question, "evidenceSnippets": [route_evidence]}]
+
+        refined = refine_commit_question_evidence([question], fallback, [ai_evidence, route_evidence])
+
+        self.assertTrue(is_question_evidence_aligned(refined[0]))
+        self.assertEqual(refined[0]["evidenceSnippets"][0]["id"], route_evidence["id"])
+
+    @patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
+    @patch("app.services.llm.call_groq")
+    def test_refine_uses_groq_judge_for_ambiguous_question(self, mock_call_groq):
+        selected_evidence = {
+            "id": "service.ts:0",
+            "path": "src/service.ts",
+            "title": "src/service.ts @@ run @@",
+            "reason": "서비스 로직 변경입니다.",
+            "excerpt": "export function run() { return true; }",
+            "kind": "modified",
+        }
+        wrong_evidence = {
+            "id": "README.md:0",
+            "path": "README.md",
+            "title": "README.md patch unavailable",
+            "reason": "문서 변경입니다.",
+            "excerpt": "docs",
+            "kind": "modified",
+        }
+        question = {
+            "id": "q1",
+            "type": "리뷰형",
+            "question": "책임 분리 관점에서 구현 선택이 적절한가요?",
+            "relatedFiles": ["README.md"],
+            "evidenceSnippets": [wrong_evidence],
+        }
+        fallback = [{**question, "evidenceSnippets": [wrong_evidence]}]
+        mock_call_groq.return_value = {
+            "text": '{"answerable": true, "bestEvidenceIds": ["service.ts:0"], "reason": "서비스 구현 근거가 더 적절합니다."}',
+            "usage": {"provider": "groq", "used": True},
+        }
+
+        refined = refine_commit_question_evidence([question], fallback, [wrong_evidence, selected_evidence])
+
+        self.assertEqual(refined[0]["evidenceSnippets"][0]["id"], selected_evidence["id"])
+        mock_call_groq.assert_called_once()
 
 
 if __name__ == "__main__":
