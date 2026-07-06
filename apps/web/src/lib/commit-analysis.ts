@@ -34,6 +34,7 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
   const firstPath = keyFiles[0]?.path ?? "변경 파일";
   const secondPath = keyFiles[1]?.path ?? firstPath;
   const thirdPath = keyFiles[2]?.path ?? secondPath;
+  const fourthPath = keyFiles[3]?.path ?? firstPath;
 
   return {
     commit: context.commit,
@@ -73,6 +74,12 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
         type: "테스트/리스크",
         question: `${thirdPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`,
         relatedFiles: [thirdPath]
+      },
+      {
+        id: "q4",
+        type: "리뷰형",
+        question: `코드 리뷰에서 ${fourthPath} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?`,
+        relatedFiles: [fourthPath]
       }
     ]
   };

@@ -1387,6 +1387,60 @@ p {
   overflow-wrap: anywhere;
 }
 
+.code-preview {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.code-preview-empty {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.code-preview__item {
+  min-width: 0;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 8px;
+  background: rgba(11, 15, 20, 0.46);
+  overflow: hidden;
+}
+
+.code-preview__item summary {
+  cursor: pointer;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.code-preview__item summary small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.code-preview__item pre {
+  max-height: 260px;
+  margin: 0;
+  border-top: 1px solid rgba(38, 50, 65, 0.78);
+  padding: 12px;
+  overflow: auto;
+  background: rgba(2, 6, 12, 0.72);
+  color: #d7e3f4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .quiz-answer {
   grid-column: 1 / -1;
   display: grid;

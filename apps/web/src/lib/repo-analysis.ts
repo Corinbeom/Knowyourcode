@@ -52,12 +52,12 @@ export function buildFallbackAnalysis(
   const stack = inferStack(packageInfo, contextFiles);
   const keyFiles = contextFiles.slice(0, 6);
   const signals = extractCodeSignals(contextFiles, focus);
-  const primarySignal = signals[0];
-  const secondarySignal = signals[1] ?? primarySignal;
-  const tertiarySignal = signals[2] ?? secondarySignal;
-  const primaryFile = primarySignal?.path ?? keyFiles[0]?.path ?? "핵심 파일";
-  const secondaryFile = secondarySignal?.path ?? keyFiles[1]?.path ?? primaryFile;
-  const tertiaryFile = tertiarySignal?.path ?? keyFiles[2]?.path ?? secondaryFile;
+  const structureFile = pickSummaryFile(contextFiles, ["entry", "ui", "service", "config"])?.path ?? signals[0]?.path ?? keyFiles[0]?.path ?? "핵심 파일";
+  const requestFiles = pickSummaryFiles(contextFiles, ["entry", "service"], 2).map((file) => file.path);
+  const dataFiles = pickSummaryFiles(contextFiles, ["data", "service"], 2).map((file) => file.path);
+  const impactFiles = pickSummaryFiles(contextFiles, ["service", "ui", "entry", "config"], 2).map((file) => file.path);
+  const interviewFiles = pickSummaryFiles(contextFiles, ["entry", "service", "data", "config"], 2).map((file) => file.path);
+  const secondaryFile = requestFiles[0] ?? keyFiles[1]?.path ?? structureFile;
 
   return {
     repo,
@@ -92,32 +92,32 @@ export function buildFallbackAnalysis(
       {
         id: "q1",
         type: questionTypes[0] ?? "구조 이해",
-        question: `${primaryFile}의 역할을 기준으로 이 프로젝트의 실행 진입점과 주요 폴더 구조를 설명해주세요.`,
-        relatedFiles: [primaryFile, secondaryFile, tertiaryFile]
+        question: `${structureFile}의 역할을 기준으로 이 프로젝트의 실행 진입점과 주요 폴더 구조를 설명해주세요.`,
+        relatedFiles: [structureFile]
       },
       {
         id: "q2",
         type: questionTypes[1 % questionTypes.length] ?? "요청 흐름",
         question: `${secondaryFile}에서 시작되는 요청 또는 화면 흐름이 어떤 파일들과 연결되는지 설명해주세요.`,
-        relatedFiles: [secondaryFile, primaryFile, tertiaryFile]
+        relatedFiles: requestFiles.length ? requestFiles : [secondaryFile]
       },
       {
         id: "q3",
         type: questionTypes[2 % questionTypes.length] ?? "데이터 흐름",
-        question: `${tertiaryFile}를 보면 데이터가 어디에서 들어오고 어디로 전달되는지 어떻게 추론할 수 있나요?`,
-        relatedFiles: [tertiaryFile, primaryFile, secondaryFile]
+        question: "데이터가 어디에서 들어오고 어디로 전달되는지 관련 파일 기준으로 설명해주세요.",
+        relatedFiles: dataFiles.length ? dataFiles : [structureFile]
       },
       {
         id: "q4",
         type: questionTypes[3 % questionTypes.length] ?? "변경 영향도",
-        question: `${primaryFile}의 동작을 수정한다면 ${secondaryFile}와 함께 어떤 영향 범위를 확인해야 하나요?`,
-        relatedFiles: [primaryFile, secondaryFile, tertiaryFile]
+        question: `${structureFile}의 동작을 수정한다면 어떤 영향 범위를 함께 확인해야 하나요?`,
+        relatedFiles: impactFiles.length ? impactFiles : [structureFile]
       },
       {
         id: "q5",
         type: questionTypes[4 % questionTypes.length] ?? "면접형",
-        question: `면접에서 ${primaryFile}와 ${secondaryFile}를 근거로 이 프로젝트의 핵심 구조를 어떻게 설명하겠습니까?`,
-        relatedFiles: [primaryFile, secondaryFile]
+        question: `면접이나 코드리뷰에서 ${secondaryFile}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`,
+        relatedFiles: interviewFiles.length ? interviewFiles : [secondaryFile]
       }
     ]
   };
@@ -131,23 +131,16 @@ function selectContextFiles(files: SourceFile[], focus: AnalysisFocus, questionT
   const runtimeCandidates = rankFiles(files.filter((file) => !isTestFile(file.path)), focus, questionTargets);
 
   if (focus === "balanced") {
-    const frontendFiles = runtimeCandidates.filter((file) => isClientFacingFile(file.path)).slice(0, 5);
-    const backendFiles = runtimeCandidates.filter((file) => isServerFacingFile(file.path)).slice(0, 5);
-    const sharedFiles = runtimeCandidates
-      .filter((file) => !frontendFiles.includes(file) && !backendFiles.includes(file))
-      .filter((file) => !isClientFacingFile(file.path) && !isServerFacingFile(file.path))
-      .slice(0, 4);
-    const supportFiles = rankFiles(files.filter((file) => isTestFile(file.path)), focus, questionTargets).slice(0, 1);
-    return [...frontendFiles, ...backendFiles, ...sharedFiles, ...supportFiles].slice(0, 15);
+    const diverseFiles = selectDiverseFiles(runtimeCandidates, ["entry", "service", "data", "ui", "config"], 3);
+    return [...diverseFiles, ...runtimeCandidates.filter((file) => !diverseFiles.includes(file))].slice(0, 15);
   }
 
   const primaryLimit = 11;
   const complementLimit = 2;
-  const primaryFiles = runtimeCandidates.filter((file) => matchesFocus(file.path, focus)).slice(0, primaryLimit);
-  const complementFiles = runtimeCandidates
-    .filter((file) => !primaryFiles.includes(file))
-    .filter((file) => !matchesFocus(file.path, focus))
-    .slice(0, complementLimit);
+  const focusedFiles = runtimeCandidates.filter((file) => matchesFocus(file.path, focus));
+  const diversePrimaryFiles = selectDiverseFiles(focusedFiles, ["entry", "service", "data", "ui", "config"], 3);
+  const primaryFiles = [...diversePrimaryFiles, ...focusedFiles.filter((file) => !diversePrimaryFiles.includes(file))].slice(0, primaryLimit);
+  const complementFiles = selectDiverseFiles(runtimeCandidates.filter((file) => !primaryFiles.includes(file) && !matchesFocus(file.path, focus)), ["entry", "service", "data", "ui", "config"], 1).slice(0, complementLimit);
   return [...primaryFiles, ...complementFiles].slice(0, 15);
 }
 
@@ -250,6 +243,45 @@ function isUiFile(path: string): boolean {
 
 function isTestFile(path: string): boolean {
   return /(^|\/)(__tests__|test|tests|spec)(\/|$)|\.(test|spec)\.(ts|tsx|js|jsx|java|kt)$/i.test(path);
+}
+
+function selectDiverseFiles(files: SourceFile[], layers: Array<ReturnType<typeof fileLayer>>, perLayer: number): SourceFile[] {
+  const selected: SourceFile[] = [];
+  for (const layer of layers) {
+    for (const file of files.filter((candidate) => fileLayer(candidate.path) === layer).slice(0, perLayer)) {
+      if (!selected.includes(file)) selected.push(file);
+    }
+  }
+  return selected;
+}
+
+function pickSummaryFile(files: FileSummary[], layers: Array<ReturnType<typeof fileLayer>>): FileSummary | undefined {
+  return pickSummaryFiles(files, layers, 1)[0] ?? files[0];
+}
+
+function pickSummaryFiles(files: FileSummary[], layers: Array<ReturnType<typeof fileLayer>>, limit: number): FileSummary[] {
+  const selected: FileSummary[] = [];
+  for (const layer of layers) {
+    for (const file of files) {
+      if (fileLayer(file.path) === layer && !selected.includes(file)) selected.push(file);
+      if (selected.length >= limit) return selected;
+    }
+  }
+  for (const file of files) {
+    if (!selected.includes(file)) selected.push(file);
+    if (selected.length >= limit) return selected;
+  }
+  return selected;
+}
+
+function fileLayer(path: string): "entry" | "service" | "data" | "ui" | "config" | "test" | "other" {
+  if (isEntrypointFile(path)) return "entry";
+  if (isBusinessLogicFile(path)) return "service";
+  if (isDataAccessFile(path)) return "data";
+  if (isUiFile(path)) return "ui";
+  if (isConfigFile(path) || /auth|security|middleware|error|exception/i.test(path)) return "config";
+  if (isTestFile(path)) return "test";
+  return "other";
 }
 
 function toFileSummary(file: SourceFile): FileSummary {

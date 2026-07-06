@@ -24,6 +24,7 @@ def build_fallback_commit_analysis(context: dict) -> dict:
     first_path = key_files[0]["path"] if len(key_files) > 0 else "변경 파일"
     second_path = key_files[1]["path"] if len(key_files) > 1 else first_path
     third_path = key_files[2]["path"] if len(key_files) > 2 else second_path
+    fourth_path = key_files[3]["path"] if len(key_files) > 3 else first_path
 
     return {
         "commit": context["commit"],
@@ -63,6 +64,12 @@ def build_fallback_commit_analysis(context: dict) -> dict:
                 "type": "테스트/리스크",
                 "question": f"{third_path} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?",
                 "relatedFiles": [third_path],
+            },
+            {
+                "id": "q4",
+                "type": "리뷰형",
+                "question": f"코드 리뷰에서 {fourth_path} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?",
+                "relatedFiles": [fourth_path],
             },
         ],
     }

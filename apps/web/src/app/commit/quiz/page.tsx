@@ -117,6 +117,7 @@ export default function CommitQuizPage() {
   if (!analysis || !currentQuestion) return null;
 
   const isLastQuestion = currentIndex === analysis.questions.length - 1;
+  const relatedSnippets = getRelatedSnippets(analysis.contextFiles, currentQuestion.relatedFiles);
 
   return (
     <main>
@@ -154,6 +155,7 @@ export default function CommitQuizPage() {
                 <li key={file}>{file}</li>
               ))}
             </ul>
+            <CodePreview snippets={relatedSnippets} emptyLabel="관련 diff 미리보기가 없습니다." />
           </aside>
 
           <label className="quiz-answer" htmlFor="commitQuizAnswer">
@@ -213,6 +215,44 @@ export default function CommitQuizPage() {
 function clampIndex(index: number, length: number): number {
   if (!length) return 0;
   return Math.max(0, Math.min(index, length - 1));
+}
+
+function CodePreview({
+  snippets,
+  emptyLabel
+}: {
+  snippets: Array<{ path: string; reason: string; excerpt: string }>;
+  emptyLabel: string;
+}) {
+  if (!snippets.length) {
+    return <p className="code-preview-empty">{emptyLabel}</p>;
+  }
+
+  return (
+    <div className="code-preview">
+      <p className="section-label">변경 코드 미리보기</p>
+      {snippets.map((snippet) => (
+        <details key={snippet.path} className="code-preview__item" open={snippets.length === 1}>
+          <summary>
+            <span>{snippet.path}</span>
+            <small>{snippet.reason}</small>
+          </summary>
+          <pre>{snippet.excerpt}</pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function getRelatedSnippets(
+  contextFiles: Array<{ path: string; reason: string; excerpt: string }>,
+  relatedFiles: string[]
+) {
+  const snippets = relatedFiles
+    .map((path) => contextFiles.find((file) => file.path === path) ?? contextFiles.find((file) => file.path.endsWith(path) || path.endsWith(file.path)))
+    .filter((file): file is { path: string; reason: string; excerpt: string } => Boolean(file?.excerpt));
+
+  return [...new Map(snippets.map((file) => [file.path, file])).values()].slice(0, 3);
 }
 
 function SiteNav() {

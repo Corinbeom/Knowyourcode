@@ -63,9 +63,13 @@ def build_repo_static_context(
 
 def build_fallback_repo_analysis(context: dict) -> dict:
     key_files = context["contextFiles"][:6]
-    first_path = key_files[0]["path"] if key_files else "핵심 파일"
-    second_path = key_files[1]["path"] if len(key_files) > 1 else first_path
-    third_path = key_files[2]["path"] if len(key_files) > 2 else second_path
+    structure_file = pick_context_file(context["contextFiles"], ["entry", "ui", "service", "config"])
+    request_files = pick_context_files(context["contextFiles"], ["entry", "service"], 2)
+    data_files = pick_context_files(context["contextFiles"], ["data", "service"], 2)
+    impact_files = pick_context_files(context["contextFiles"], ["service", "ui", "entry", "config"], 2)
+    interview_files = pick_context_files(context["contextFiles"], ["entry", "service", "data", "config"], 2)
+    first_path = structure_file["path"] if structure_file else "핵심 파일"
+    second_path = request_files[0]["path"] if request_files else first_path
     question_types = context["questionTypes"]
 
     return {
@@ -97,32 +101,32 @@ def build_fallback_repo_analysis(context: dict) -> dict:
             {
                 "id": "q1",
                 "type": question_types[0],
-                "question": f"{first_path}의 역할을 기준으로 주요 구조를 설명해주세요.",
+                "question": f"{first_path}의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.",
                 "relatedFiles": [first_path],
             },
             {
                 "id": "q2",
                 "type": question_types[1 % len(question_types)],
-                "question": f"{second_path}에서 시작되는 요청 흐름을 설명해주세요.",
-                "relatedFiles": [second_path],
+                "question": f"{second_path}를 포함한 요청 처리 흐름이 어떤 파일들을 거쳐 이어지는지 설명해주세요.",
+                "relatedFiles": [file["path"] for file in request_files] or [second_path],
             },
             {
                 "id": "q3",
                 "type": question_types[2 % len(question_types)],
-                "question": f"{third_path}에서 데이터가 어떻게 전달되는지 설명해주세요.",
-                "relatedFiles": [third_path],
+                "question": "데이터가 생성, 검증, 저장 또는 조회되는 흐름을 관련 파일 기준으로 설명해주세요.",
+                "relatedFiles": [file["path"] for file in data_files] or [first_path],
             },
             {
                 "id": "q4",
                 "type": question_types[3 % len(question_types)],
-                "question": f"{first_path}를 수정하면 어떤 영향 범위를 확인해야 하나요?",
-                "relatedFiles": [first_path],
+                "question": "이 기능을 수정할 때 함께 확인해야 할 영향 범위와 파일은 무엇인가요?",
+                "relatedFiles": [file["path"] for file in impact_files] or [first_path],
             },
             {
                 "id": "q5",
                 "type": question_types[4 % len(question_types)],
-                "question": f"면접에서 {second_path}를 근거로 핵심 구조를 어떻게 설명하겠습니까?",
-                "relatedFiles": [second_path],
+                "question": f"면접이나 코드리뷰에서 {second_path}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?",
+                "relatedFiles": [file["path"] for file in interview_files] or [second_path],
             },
         ],
     }
@@ -133,14 +137,15 @@ def select_context_files(files: list[dict], focus: str, question_targets: list[s
     ranked = sorted(runtime_files, key=lambda file: score_file(file, focus, question_targets), reverse=True)
 
     if focus == "balanced":
-        frontend = [file for file in ranked if is_client_file(file["path"])][:5]
-        backend = [file for file in ranked if is_server_file(file["path"])][:5]
-        selected = frontend + [file for file in backend if file not in frontend]
-        selected += [file for file in ranked if file not in selected][:5]
+        selected = select_diverse_files(ranked, ["entry", "service", "data", "ui", "config"], per_layer=3)
+        selected += [file for file in ranked if file not in selected][:MAX_CONTEXT_FILES]
         return selected[:MAX_CONTEXT_FILES]
 
-    primary = [file for file in ranked if matches_focus(file["path"], focus)][:11]
-    complement = [file for file in ranked if file not in primary][:4]
+    focused = [file for file in ranked if matches_focus(file["path"], focus)]
+    primary = select_diverse_files(focused, ["entry", "service", "data", "ui", "config"], per_layer=3)[:11]
+    primary += [file for file in focused if file not in primary][:11]
+    primary = primary[:11]
+    complement = select_diverse_files([file for file in ranked if file not in primary], ["entry", "service", "data", "ui", "config"], per_layer=1)[:4]
     return (primary + complement)[:MAX_CONTEXT_FILES]
 
 
@@ -269,6 +274,53 @@ def infer_file_reason(path: str) -> str:
     if is_client_file(path):
         return "사용자 화면과 UI 흐름을 확인할 수 있는 파일"
     return "프로젝트 구조 이해에 참고할 수 있는 파일"
+
+
+def select_diverse_files(files: list[dict], layers: list[str], per_layer: int) -> list[dict]:
+    selected = []
+    for layer in layers:
+        layer_files = [file for file in files if file_layer(file["path"]) == layer]
+        for file in layer_files[:per_layer]:
+            if file not in selected:
+                selected.append(file)
+    return selected
+
+
+def pick_context_file(files: list[dict], layers: list[str]) -> dict | None:
+    picked = pick_context_files(files, layers, 1)
+    return picked[0] if picked else (files[0] if files else None)
+
+
+def pick_context_files(files: list[dict], layers: list[str], limit: int) -> list[dict]:
+    selected = []
+    for layer in layers:
+        for file in files:
+            if file_layer(file["path"]) == layer and file not in selected:
+                selected.append(file)
+                if len(selected) >= limit:
+                    return selected
+    for file in files:
+        if file not in selected:
+            selected.append(file)
+            if len(selected) >= limit:
+                return selected
+    return selected
+
+
+def file_layer(path: str) -> str:
+    if re.search(r"route|router|controller|handler|endpoint|api/", path, re.I):
+        return "entry"
+    if re.search(r"service|usecase|domain|interactor|manager|assistant", path, re.I):
+        return "service"
+    if re.search(r"repository|entity|model|schema|store|db|database|dao|mapper|prisma|migration", path, re.I):
+        return "data"
+    if is_client_file(path):
+        return "ui"
+    if is_config_file(path) or re.search(r"auth|security|middleware|error|exception", path, re.I):
+        return "config"
+    if is_test_file(path):
+        return "test"
+    return "other"
 
 
 def matches_focus(path: str, focus: str) -> bool:
