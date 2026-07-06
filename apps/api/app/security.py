@@ -114,15 +114,28 @@ def authenticated_quota_limiter(kind: str) -> Callable:
         today, reset_at, ttl = quota_window()
         user_limit = int(os.getenv(user_limit_env, str(default_user_limit)))
         ip_limit = int(os.getenv(ip_limit_env, str(default_ip_limit)))
+        user_key = f"quota:user:{user_id}:{today}:{kind}"
+        ip_key = f"quota:ip:{client_ip(request)}:{today}:{kind}"
         try:
-            user_quota = consume_daily_quota(client, f"quota:user:{user_id}:{today}:{kind}", user_limit, ttl, reset_at)
-            ip_quota = consume_daily_quota(client, f"quota:ip:{client_ip(request)}:{today}:{kind}", ip_limit, ttl, reset_at)
+            user_quota = ensure_daily_quota_available(client, user_key, user_limit, reset_at, ttl)
+            ip_quota = ensure_daily_quota_available(client, ip_key, ip_limit, reset_at, ttl)
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=503, detail="사용량 제한 저장소 처리 중 오류가 발생했습니다.") from exc
 
-        return {"userId": user_id, "userLogin": user_login, kind: {"user": user_quota, "ip": ip_quota}}
+        return {
+            "userId": user_id,
+            "userLogin": user_login,
+            kind: {"user": user_quota, "ip": ip_quota},
+            "_quota": {
+                "kind": kind,
+                "ttl": ttl,
+                "resetAt": reset_at,
+                "user": {"key": user_key, "limit": user_limit},
+                "ip": {"key": ip_key, "limit": ip_limit},
+            },
+        }
 
     return dependency
 
@@ -182,7 +195,7 @@ def quota_window() -> tuple[str, str, int]:
 
 def consume_daily_quota(client, key: str, limit: int, ttl: int, reset_at: str) -> dict:
     if limit <= 0:
-        return {"limit": limit, "remaining": 999999, "resetAt": reset_at}
+        return {"limit": limit, "remaining": 999999, "used": 0, "resetAt": reset_at}
     current = client.incr(key)
     if current == 1:
         client.expire(key, ttl)
@@ -197,7 +210,48 @@ def consume_daily_quota(client, key: str, limit: int, ttl: int, reset_at: str) -
                 "X-RateLimit-Reset": reset_at,
             },
         )
-    return {"limit": limit, "remaining": max(limit - current, 0), "resetAt": reset_at}
+    return {"limit": limit, "remaining": max(limit - current, 0), "used": current, "resetAt": reset_at}
+
+
+def ensure_daily_quota_available(client, key: str, limit: int, reset_at: str, retry_after: int) -> dict:
+    if limit <= 0:
+        return {"limit": limit, "remaining": 999999, "used": 0, "resetAt": reset_at}
+    used = int(client.get(key) or 0)
+    if used >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail="오늘 사용 가능한 횟수를 모두 사용했습니다.",
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": reset_at,
+            },
+        )
+    return {"limit": limit, "remaining": max(limit - used, 0), "used": used, "resetAt": reset_at}
+
+
+def consume_authenticated_quota(quota: dict) -> dict | None:
+    quota_context = quota.get("_quota")
+    if not quota_context:
+        return quota.get("analysis") or quota.get("evaluation")
+
+    client = redis_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="사용량 제한 저장소에 연결할 수 없습니다.")
+
+    try:
+        user_target = quota_context["user"]
+        ip_target = quota_context["ip"]
+        reset_at = quota_context["resetAt"]
+        ttl = int(quota_context["ttl"])
+        user_quota = consume_daily_quota(client, user_target["key"], int(user_target["limit"]), ttl, reset_at)
+        ip_quota = consume_daily_quota(client, ip_target["key"], int(ip_target["limit"]), ttl, reset_at)
+        return {"user": user_quota, "ip": ip_quota}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="사용량 제한 저장소 처리 중 오류가 발생했습니다.") from exc
 
 
 def read_daily_quota(client, key: str, limit: int, reset_at: str) -> dict:

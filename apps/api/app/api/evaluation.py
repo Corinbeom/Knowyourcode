@@ -8,7 +8,7 @@ from app.schemas.evaluation import (
     EvaluateQuizRequest,
     EvaluateQuizResponse,
 )
-from app.security import authenticated_quota_limiter
+from app.security import authenticated_quota_limiter, consume_authenticated_quota
 from app.services.evaluation import evaluate_answer, evaluate_quiz
 
 router = APIRouter()
@@ -20,7 +20,8 @@ def evaluate_single_answer(payload: EvaluateAnswerRequest, quota: dict = Depends
     answer = payload.answer.strip()
     validate_answer(answer)
     try:
-        return {"evaluation": evaluate_answer(payload.analysis, payload.questionId, answer), "limits": quota.get("evaluation")}
+        evaluation = evaluate_answer(payload.analysis, payload.questionId, answer)
+        return {"evaluation": evaluation, "limits": consume_authenticated_quota(quota)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -28,13 +29,15 @@ def evaluate_single_answer(payload: EvaluateAnswerRequest, quota: dict = Depends
 @router.post("/evaluate-quiz", response_model=EvaluateQuizResponse)
 def evaluate_repo_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
     answers = normalize_answers(payload.analysis, payload.answers)
-    return {"evaluation": evaluate_quiz(payload.analysis, answers), "limits": quota.get("evaluation")}
+    evaluation = evaluate_quiz(payload.analysis, answers)
+    return {"evaluation": evaluation, "limits": consume_authenticated_quota(quota)}
 
 
 @router.post("/evaluate-commit-quiz", response_model=EvaluateQuizResponse)
 def evaluate_commit_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
     answers = normalize_answers(payload.analysis, payload.answers)
-    return {"evaluation": evaluate_quiz(payload.analysis, answers, commit_mode=True), "limits": quota.get("evaluation")}
+    evaluation = evaluate_quiz(payload.analysis, answers, commit_mode=True)
+    return {"evaluation": evaluation, "limits": consume_authenticated_quota(quota)}
 
 
 def validate_answer(answer: str) -> None:

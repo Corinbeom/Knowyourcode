@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.repo import AnalyzeRepoRequest, AnalyzeRepoResponse
-from app.security import authenticated_quota_limiter
+from app.security import authenticated_quota_limiter, consume_authenticated_quota
 from app.services.github_repo import fetch_repo_files, parse_github_repo_url
 from app.services.llm import generate_repo_analysis
 from app.services.repo_analysis import (
@@ -33,7 +33,7 @@ def analyze_repo(payload: AnalyzeRepoRequest, quota: dict = Depends(repo_quota_l
         context = build_repo_static_context(repo, files, focus, question_level, question_types, question_targets)
         fallback = build_fallback_repo_analysis(context)
         analysis = generate_repo_analysis(context, fallback)
-        return {"analysis": analysis, "limits": quota.get("analysis")}
+        return {"analysis": analysis, "limits": consume_authenticated_quota(quota)}
     except HTTPException:
         raise
     except ValueError as exc:

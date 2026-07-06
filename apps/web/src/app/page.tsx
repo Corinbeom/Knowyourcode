@@ -25,20 +25,20 @@ const PAIN_POINTS = [
 ];
 
 const HOW_IT_WORKS = [
-  ["GitHub 저장소 입력", "public GitHub repository URL을 입력하면 프로젝트 구조를 분석합니다."],
-  ["프로젝트 맥락 분석", "요청 흐름, 데이터 플로우, 주요 모듈, 변경 영향도를 파악합니다."],
-  ["이해도 질문 생성", "단순 개념 질문이 아니라 실제 프로젝트 코드 기반 질문을 생성합니다."],
-  ["답변 제출", "사용자가 직접 자신의 프로젝트 구조를 설명합니다."],
-  ["코드 근거 기반 피드백", "답변이 실제 코드와 맞는지 확인하고 다시 봐야 할 파일을 알려줍니다."]
+  ["분석 대상 선택", "전체 저장소 또는 특정 커밋 URL 중 지금 확인하고 싶은 범위를 선택합니다."],
+  ["GitHub 코드 수집", "불필요한 빌드 산출물은 제외하고 README, 설정, 핵심 소스 파일을 정리합니다."],
+  ["프로젝트 맥락 분석", "요청 흐름, 데이터 흐름, 주요 모듈, 변경 영향도를 파악합니다."],
+  ["이해도 질문 생성", "실제 코드와 변경사항을 근거로 답해야 하는 질문을 만듭니다."],
+  ["답변 기반 피드백", "답변이 코드와 맞는지 평가하고 다시 볼 파일을 추천합니다."]
 ];
 
 const FEATURES = [
-  ["Request Flow Questions", "사용자 요청이 어디서 시작해서 어떤 계층을 거쳐 처리되는지 질문합니다."],
-  ["Data Flow Questions", "데이터가 생성, 검증, 저장, 반환되는 흐름을 이해하고 있는지 확인합니다."],
-  ["Change Impact Questions", "특정 기능을 수정할 때 어떤 파일과 모듈에 영향이 생기는지 질문합니다."],
-  ["Code-grounded Feedback", "AI의 추측이 아니라 실제 코드 근거를 기반으로 답변을 평가합니다."],
-  ["Files to Review", "부족한 답변을 개선하기 위해 다시 봐야 할 파일을 추천합니다."],
-  ["Interview Mode", "개발자 면접에서 받을 수 있는 프로젝트 질문과 꼬리 질문으로 확장합니다."]
+  ["요청 흐름 질문", "사용자 요청이 어디서 시작해서 어떤 계층을 거쳐 처리되는지 질문합니다."],
+  ["데이터 흐름 질문", "데이터가 생성, 검증, 저장, 반환되는 흐름을 이해하고 있는지 확인합니다."],
+  ["변경 영향도 질문", "특정 기능을 수정할 때 어떤 파일과 모듈에 영향이 생기는지 질문합니다."],
+  ["커밋 단위 분석", "하나의 커밋이 왜 필요한 변경인지, 어떤 위험이 있는지 리뷰 관점으로 확인합니다."],
+  ["코드 근거 피드백", "AI의 추측이 아니라 실제 코드 근거를 기반으로 답변을 평가합니다."],
+  ["다시 볼 파일 추천", "부족한 답변을 개선하기 위해 먼저 읽어야 할 파일을 추천합니다."]
 ];
 
 const INTERACTIVE_DEMOS = [
@@ -124,8 +124,8 @@ export default function Home() {
               <span className="gradient-text">당신은 설명할 수 있나요?</span>
             </h1>
             <p className="hero__copy">
-              KnowYourCode는 GitHub 저장소를 분석하고, 요청 흐름, 데이터 플로우, 변경 영향도를 질문으로 검증해
-              당신이 프로젝트를 진짜 이해하고 있는지 확인해주는 AI 코드 이해도 테스트입니다.
+              KnowYourCode는 GitHub 저장소와 커밋을 분석하고, 요청 흐름, 데이터 흐름, 변경 영향도를 질문으로 검증해
+              내가 만든 프로젝트를 실제로 설명할 수 있는지 확인해주는 AI 코드 이해도 테스트입니다.
             </p>
             <div className="hero-actions">
               <button className="primary-button" type="button" onClick={() => goStart("hero")}>
@@ -137,7 +137,7 @@ export default function Home() {
             </div>
             <div className="hero__meta">
               <span>· Public repository 지원</span>
-              <span>· Commit Mode 지원</span>
+              <span>· Repo / Commit Mode 지원</span>
               <span>· 질문 5개 기반 테스트</span>
               <span>· 코드 근거 피드백</span>
             </div>
@@ -146,12 +146,12 @@ export default function Home() {
         </div>
       </section>
 
-      <LandingSection label="문제 제기" title="요즘 AI는 코드를 빠르게 만들어줍니다.">
+      <LandingSection label="문제 제기" title="코드는 빨리 만들어졌는데, 설명은 여전히 내 몫입니다.">
         <div className="landing-copy-grid">
           <div className="landing-prose">
             <p>에러가 나도 AI가 고쳐주고, 기능이 필요하면 AI가 구현해주고, 테스트도 AI가 작성해줍니다.</p>
             <p>
-              하지만 AI는 코드를 만들어줄 수 있어도, 그 코드의 맥락을 이해하는 책임까지 대신 가져가주지는 않습니다.
+              하지만 면접, 코드리뷰, 장애 대응에서는 결국 내가 코드의 흐름과 의도를 설명해야 합니다.
             </p>
           </div>
           <ul className="landing-check-list">
@@ -171,17 +171,17 @@ export default function Home() {
         <p className="landing-emphasis">답하기 어렵다면, 코드는 있지만 아직 완전히 내 코드는 아닐 수 있습니다.</p>
       </LandingSection>
 
-      <LandingSection label="Solution" title="KnowYourCode는 코드를 대신 설명해주는 서비스가 아닙니다.">
+      <LandingSection label="Solution" title="설명을 대신 듣는 것이 아니라, 내가 설명할 수 있는지 확인합니다.">
         <div className="solution-panel">
           <p>
-            GitHub 저장소를 입력하면 KnowYourCode가 프로젝트를 분석하고, 실제 코드 맥락을 기반으로 질문을 생성합니다.
-            당신은 직접 답변하고, AI는 코드 근거를 기준으로 피드백합니다.
+            GitHub 저장소나 커밋 URL을 입력하면 KnowYourCode가 코드 맥락을 분석하고 질문을 생성합니다.
+            사용자는 직접 답변하고, AI는 실제 코드 근거를 기준으로 부족한 부분을 피드백합니다.
           </p>
           <strong>당신이 코드를 이해했는지 검증하는 서비스입니다.</strong>
         </div>
       </LandingSection>
 
-      <LandingSection label="How It Works" title="저장소 입력부터 최종 피드백까지 한 흐름으로 진행됩니다.">
+      <LandingSection label="How It Works" title="전체 프로젝트와 커밋 변경사항을 다른 관점으로 검증합니다.">
         <div className="steps-grid">
           {HOW_IT_WORKS.map(([title, description], index) => (
             <article key={title}>
@@ -194,7 +194,7 @@ export default function Home() {
         <div className="inline-cta">
           <div>
             <p className="section-label">바로 시작하기</p>
-            <h3>내 GitHub 저장소로 이해도 테스트를 시작하세요.</h3>
+            <h3>저장소 구조부터 최근 커밋까지, 지금 설명 가능한지 확인하세요.</h3>
           </div>
           <button className="primary-button" type="button" onClick={() => goStart("inline")}>
             GitHub URL 입력하기 →
@@ -270,7 +270,7 @@ export default function Home() {
         </div>
       </LandingSection>
 
-      <LandingSection label="핵심 기능" title="프로젝트를 진짜 이해했는지 확인하는 질문과 피드백">
+      <LandingSection label="핵심 기능" title="프로젝트와 변경사항을 코드 기준으로 검증합니다.">
         <div className="feature-grid">
           {FEATURES.map(([title, description]) => (
             <article key={title}>
@@ -302,7 +302,7 @@ export default function Home() {
         </div>
       </LandingSection>
 
-      <LandingSection label="이런 사람에게 필요합니다" title="AI 코딩을 쓰는 개발자라면 코드 이해도 검증이 필요합니다.">
+      <LandingSection label="이런 사람에게 필요합니다" title="AI 코딩으로 만든 프로젝트를 직접 설명해야 하는 사람에게 필요합니다.">
         <div className="target-grid">
           {TARGET_USERS.map((target) => (
             <article key={target}>{target}</article>
@@ -313,8 +313,8 @@ export default function Home() {
       <section className="landing-final-cta">
         <div>
           <p className="eyebrow">Why KnowYourCode</p>
-          <h2>AI coding tools help you write code faster.</h2>
-          <p>KnowYourCode helps you understand what you built.</p>
+          <h2>AI는 코드를 더 빨리 만들게 해줍니다.</h2>
+          <p>KnowYourCode는 내가 만든 코드를 이해하고 설명하게 도와줍니다.</p>
           <strong>AI가 만든 코드, 이제 진짜 내 코드로 만드세요.</strong>
         </div>
         <button className="primary-button" type="button" onClick={() => goStart("final")}>
@@ -411,7 +411,7 @@ function SiteNav({ onStartClick }: { onStartClick: () => void }) {
         </div>
         <div className="nav-meta">
           <span className="nav-dot" />
-          Public repo analysis
+          공개 저장소 분석
           <button type="button" onClick={onStartClick}>테스트 시작</button>
           <AuthButton />
         </div>
@@ -429,37 +429,37 @@ function HeroPreview() {
           <span />
           <span />
         </div>
-        <span>quiz / code-understanding</span>
+        <span>quiz / 코드 이해도</span>
         <span>v1</span>
       </div>
       <div className="preview-card__body">
         <div className="preview-score">
-          <small>Understanding Score</small>
+          <small>이해도 점수</small>
           <strong>72</strong>
           <div className="progress-track">
             <div className="progress-fill" />
           </div>
           <div className="metric-list">
             <div>
-              <span>Request Flow</span>
-              <span>Medium</span>
+              <span>요청 흐름</span>
+              <span>보통</span>
             </div>
             <div>
-              <span>Change Impact</span>
-              <span>Risk</span>
+              <span>변경 영향도</span>
+              <span>주의</span>
             </div>
             <div>
-              <span>Evidence</span>
-              <span>Files</span>
+              <span>코드 근거</span>
+              <span>파일</span>
             </div>
           </div>
         </div>
         <div className="preview-panel">
-          <small>Question 03</small>
+          <small>질문 03</small>
           <div className="tag-list">
-            <span className="tag danger">Auth Flow</span>
-            <span className="tag warning">Data Flow</span>
-            <span className="tag success">Code Grounded</span>
+            <span className="tag danger">인증 흐름</span>
+            <span className="tag warning">데이터 흐름</span>
+            <span className="tag success">코드 근거</span>
           </div>
           <p className="preview-question">로그인 요청이 어떤 API route와 service 파일을 거쳐 처리되는지 설명해보세요.</p>
         </div>

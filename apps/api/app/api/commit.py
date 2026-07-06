@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.commit import AnalyzeCommitRequest, AnalyzeCommitResponse
-from app.security import authenticated_quota_limiter
+from app.security import authenticated_quota_limiter, consume_authenticated_quota
 from app.services.commit_analysis import build_commit_static_context, build_fallback_commit_analysis
 from app.services.github_commit import fetch_commit_changes, parse_github_commit_url
 from app.services.llm import generate_commit_analysis
@@ -21,7 +21,7 @@ def analyze_commit(payload: AnalyzeCommitRequest, quota: dict = Depends(commit_q
         context = build_commit_static_context(commit_changes)
         fallback = build_fallback_commit_analysis(context)
         analysis = generate_commit_analysis(context, fallback)
-        return {"analysis": analysis, "limits": quota.get("analysis")}
+        return {"analysis": analysis, "limits": consume_authenticated_quota(quota)}
     except HTTPException:
         raise
     except ValueError as exc:
