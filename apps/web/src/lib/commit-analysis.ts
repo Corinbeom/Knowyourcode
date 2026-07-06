@@ -1,7 +1,9 @@
-import type { CommitAnalysisResult, CommitFileChange, CommitInfo, FileSummary } from "./types";
+import type { CodeEvidence, CommitAnalysisResult, CommitFileChange, CommitInfo, FileSummary } from "./types";
 
 const MAX_CONTEXT_FILES = 12;
 const MAX_PATCH_EXCERPT = 2_400;
+const MAX_EVIDENCE_SNIPPETS = 18;
+const MAX_HUNK_EXCERPT = 1_800;
 
 export type CommitStaticContext = {
   commit: CommitInfo;
@@ -9,6 +11,7 @@ export type CommitStaticContext = {
   totalAdditions: number;
   totalDeletions: number;
   contextFiles: FileSummary[];
+  evidenceSnippets: CodeEvidence[];
 };
 
 export function buildCommitStaticContext(input: {
@@ -19,13 +22,15 @@ export function buildCommitStaticContext(input: {
 }): CommitStaticContext {
   const rankedFiles = [...input.files].sort((a, b) => scoreCommitFile(b) - scoreCommitFile(a));
   const contextFiles = rankedFiles.slice(0, MAX_CONTEXT_FILES).map(toCommitFileSummary);
+  const evidenceSnippets = buildCommitEvidenceSnippets(rankedFiles);
 
   return {
     commit: input.commit,
     files: input.files,
     totalAdditions: input.totalAdditions,
     totalDeletions: input.totalDeletions,
-    contextFiles
+    contextFiles,
+    evidenceSnippets
   };
 }
 
@@ -35,6 +40,12 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
   const secondPath = keyFiles[1]?.path ?? firstPath;
   const thirdPath = keyFiles[2]?.path ?? secondPath;
   const fourthPath = keyFiles[3]?.path ?? firstPath;
+  const fallbackEvidence = [
+    pickEvidenceForPath(context.evidenceSnippets, firstPath),
+    pickEvidenceForPath(context.evidenceSnippets, secondPath),
+    pickEvidenceForPath(context.evidenceSnippets, thirdPath),
+    pickEvidenceForPath(context.evidenceSnippets, fourthPath)
+  ];
 
   return {
     commit: context.commit,
@@ -48,6 +59,7 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
       reason: "LLM 응답을 사용하지 못해 커밋 기본 분석으로 대체했습니다."
     },
     contextFiles: keyFiles,
+    evidenceSnippets: context.evidenceSnippets,
     report: {
       oneLineSummary: `${context.commit.shortSha} 커밋의 변경 파일과 diff를 기반으로 한 코드 이해도 분석입니다.`,
       changeIntent: "커밋 메시지와 변경 파일을 기준으로 변경 의도를 직접 확인해야 합니다.",
@@ -61,28 +73,103 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
         id: "q1",
         type: "변경 의도",
         question: `${firstPath} 변경은 어떤 문제를 해결하려는 의도인가요?`,
-        relatedFiles: [firstPath]
+        relatedFiles: [firstPath],
+        evidenceSnippets: compactEvidenceList([fallbackEvidence[0]])
       },
       {
         id: "q2",
         type: "변경 영향도",
         question: `${secondPath} 변경이 연결된 기능이나 모듈에 어떤 영향을 줄 수 있나요?`,
-        relatedFiles: [secondPath]
+        relatedFiles: [secondPath],
+        evidenceSnippets: compactEvidenceList([fallbackEvidence[1]])
       },
       {
         id: "q3",
         type: "테스트/리스크",
         question: `${thirdPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`,
-        relatedFiles: [thirdPath]
+        relatedFiles: [thirdPath],
+        evidenceSnippets: compactEvidenceList([fallbackEvidence[2]])
       },
       {
         id: "q4",
         type: "리뷰형",
         question: `코드 리뷰에서 ${fourthPath} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?`,
-        relatedFiles: [fourthPath]
+        relatedFiles: [fourthPath],
+        evidenceSnippets: compactEvidenceList([fallbackEvidence[3]])
       }
     ]
   };
+}
+
+function splitPatchHunks(file: CommitFileChange): Array<{ index: number; header: string; excerpt: string }> {
+  if (!file.patch) return [];
+  return file.patch
+    .split(/(?=^@@ .+? @@)/m)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part, index) => {
+      const firstLine = part.split("\n")[0] ?? "";
+      return {
+        index,
+        header: firstLine.startsWith("@@") ? firstLine : `파일 변경 ${index + 1}`,
+        excerpt: part.slice(0, MAX_HUNK_EXCERPT)
+      };
+    });
+}
+
+function buildCommitEvidenceSnippets(files: CommitFileChange[]): CodeEvidence[] {
+  const snippets = files.flatMap((file) => {
+    const hunks = splitPatchHunks(file);
+    return hunks.length ? hunks.map((hunk) => toCodeEvidence(file, hunk)) : [toCodeEvidence(file, null)];
+  });
+
+  return snippets.sort((a, b) => scoreCommitFileByPath(b.path, b.excerpt) - scoreCommitFileByPath(a.path, a.excerpt)).slice(0, MAX_EVIDENCE_SNIPPETS);
+}
+
+function toCodeEvidence(
+  file: CommitFileChange,
+  hunk: { index: number; header: string; excerpt: string } | null
+): CodeEvidence {
+  const header = hunk?.header ?? "patch unavailable";
+  return {
+    id: `${sanitizeEvidenceId(file.path)}:${hunk?.index ?? 0}`,
+    path: file.path,
+    title: `${file.path} ${header}`,
+    reason: inferCommitFileReason(file),
+    excerpt: hunk?.excerpt ?? fallbackEvidenceExcerpt(file),
+    kind: file.status
+  };
+}
+
+function fallbackEvidenceExcerpt(file: CommitFileChange): string {
+  return [
+    `status: ${file.status}`,
+    `additions: ${file.additions}`,
+    `deletions: ${file.deletions}`,
+    file.previousPath ? `previousPath: ${file.previousPath}` : "",
+    "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)"
+  ].filter(Boolean).join("\n");
+}
+
+function sanitizeEvidenceId(path: string): string {
+  return path.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-|-$/g, "") || "unknown";
+}
+
+function scoreCommitFileByPath(path: string, excerpt: string): number {
+  let score = excerpt.length > 0 ? Math.min(excerpt.length, 1_200) / 80 : 0;
+  if (/service|controller|route|api|domain|repository|entity|model|schema|auth|security/i.test(path)) score += 40;
+  if (/\.(ts|tsx|js|jsx|java|kt|py|go|rs)$/i.test(path)) score += 20;
+  if (/function|class|def |return|throw|catch|async|await|export|import/.test(excerpt)) score += 20;
+  if (/test|spec|__tests__/i.test(path)) score -= 25;
+  return score;
+}
+
+function pickEvidenceForPath(snippets: CodeEvidence[], path: string): CodeEvidence | undefined {
+  return snippets.find((snippet) => snippet.path === path) ?? snippets[0];
+}
+
+function compactEvidenceList(snippets: Array<CodeEvidence | undefined>): CodeEvidence[] {
+  return [...new Map(snippets.filter((snippet): snippet is CodeEvidence => Boolean(snippet)).map((snippet) => [snippet.id, snippet])).values()];
 }
 
 function scoreCommitFile(file: CommitFileChange): number {
