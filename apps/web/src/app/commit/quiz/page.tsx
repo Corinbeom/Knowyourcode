@@ -21,6 +21,7 @@ export default function CommitQuizPage() {
   const [answerDraft, setAnswerDraft] = useState("");
   const [quizState, setQuizState] = useState<QuizState>("answering");
   const [error, setError] = useState("");
+  const [selectedSnippetPath, setSelectedSnippetPath] = useState<string | null>(null);
 
   useEffect(() => {
     const storedAnalysis = loadCommitAnalysisResult();
@@ -118,6 +119,7 @@ export default function CommitQuizPage() {
 
   const isLastQuestion = currentIndex === analysis.questions.length - 1;
   const relatedSnippets = getRelatedSnippets(analysis.contextFiles, currentQuestion.relatedFiles);
+  const selectedSnippet = selectedSnippetPath ? relatedSnippets.find((snippet) => snippet.path === selectedSnippetPath) ?? null : null;
 
   return (
     <main>
@@ -139,74 +141,86 @@ export default function CommitQuizPage() {
           <span style={{ width: `${progress}%` }} />
         </div>
 
-        <form className="quiz-card" onSubmit={handleSubmit}>
-          <div className="quiz-question">
-            <div className="quiz-question__meta">
-              <span>{currentQuestion.type}</span>
-              <span>{answeredCount}/{analysis.questions.length} 답변 완료</span>
+        <div className={selectedSnippet ? "quiz-workspace is-code-open" : "quiz-workspace"}>
+          <form className="quiz-card" onSubmit={handleSubmit}>
+            <div className="quiz-question">
+              <div className="quiz-question__meta">
+                <span>{currentQuestion.type}</span>
+                <span>{answeredCount}/{analysis.questions.length} 답변 완료</span>
+              </div>
+              <h2>{currentQuestion.question}</h2>
             </div>
-            <h2>{currentQuestion.question}</h2>
-          </div>
 
-          <aside className="quiz-related">
-            <p className="section-label">관련 변경 파일</p>
-            <ul>
-              {currentQuestion.relatedFiles.map((file) => (
-                <li key={file}>{file}</li>
-              ))}
-            </ul>
-            <CodePreview snippets={relatedSnippets} emptyLabel="관련 diff 미리보기가 없습니다." />
-          </aside>
+            <aside className="quiz-related">
+              <p className="section-label">관련 변경 파일</p>
+              <ul>
+                {currentQuestion.relatedFiles.map((file) => (
+                  <li key={file}>
+                    <button
+                      type="button"
+                      className={isSelectedRelatedFile(selectedSnippet?.path, file) ? "is-active" : ""}
+                      onClick={() => setSelectedSnippetPath(resolveSnippetPath(relatedSnippets, file))}
+                    >
+                      {file}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </aside>
 
-          <label className="quiz-answer" htmlFor="commitQuizAnswer">
-            <span>내 답변</span>
-            <textarea
-              id="commitQuizAnswer"
-              value={answerDraft}
-              onChange={(event) => {
-                setAnswerDraft(event.target.value);
-                if (quizState === "error") {
-                  setQuizState("answering");
-                  setError("");
-                }
-              }}
-              placeholder="커밋 메시지, 변경 파일, 영향 범위, 테스트 관점을 연결해서 답변해보세요."
-              maxLength={4000}
-              disabled={quizState === "evaluating"}
-            />
-          </label>
+            <label className="quiz-answer" htmlFor="commitQuizAnswer">
+              <span>내 답변</span>
+              <textarea
+                id="commitQuizAnswer"
+                value={answerDraft}
+                onChange={(event) => {
+                  setAnswerDraft(event.target.value);
+                  if (quizState === "error") {
+                    setQuizState("answering");
+                    setError("");
+                  }
+                }}
+                placeholder="커밋 메시지, 변경 파일, 영향 범위, 테스트 관점을 연결해서 답변해보세요."
+                maxLength={4000}
+                disabled={quizState === "evaluating"}
+              />
+            </label>
 
-          {quizState === "evaluating" ? (
-            <div className="evaluation-loading">
-              <span className="evaluation-loading__spinner" aria-hidden="true" />
+            {quizState === "evaluating" ? (
+              <div className="evaluation-loading">
+                <span className="evaluation-loading__spinner" aria-hidden="true" />
+                <div>
+                  <strong>커밋 답변을 diff 근거로 평가하는 중입니다</strong>
+                  <p>변경 의도, 영향 범위, 테스트 리스크를 문항별로 정리하고 있습니다.</p>
+                </div>
+              </div>
+            ) : null}
+            {quizState === "error" ? <p className="error">{error}</p> : null}
+
+            <div className="quiz-actions">
+              <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={quizState === "evaluating"}>
+                처음으로
+              </button>
               <div>
-                <strong>커밋 답변을 diff 근거로 평가하는 중입니다</strong>
-                <p>변경 의도, 영향 범위, 테스트 리스크를 문항별로 정리하고 있습니다.</p>
+                <button className="secondary-button" type="button" onClick={() => moveTo(currentIndex - 1)} disabled={currentIndex === 0 || quizState === "evaluating"}>
+                  이전
+                </button>
+                <button className="primary-button" type={isLastQuestion ? "submit" : "button"} onClick={isLastQuestion ? undefined : () => {
+                  if (!currentQuestion || !answerDraft.trim()) return;
+                  const nextAnswers = upsertAnswer(currentQuestion.id, answerDraft.trim());
+                  setAnswers(nextAnswers);
+                  moveTo(currentIndex + 1, nextAnswers);
+                }} disabled={!answerDraft.trim() || quizState === "evaluating"}>
+                  {quizState === "evaluating" ? "평가 중" : quizState === "error" ? "다시 평가하기 →" : isLastQuestion ? "결과 보기 →" : "다음 →"}
+                </button>
               </div>
             </div>
+            <p className="usage-note">Commit Mode는 마지막에 한 번만 평가 API를 호출합니다.</p>
+          </form>
+          {selectedSnippet ? (
+            <CodePanel snippet={selectedSnippet} title="변경 코드 미리보기" onClose={() => setSelectedSnippetPath(null)} />
           ) : null}
-          {quizState === "error" ? <p className="error">{error}</p> : null}
-
-          <div className="quiz-actions">
-            <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={quizState === "evaluating"}>
-              처음으로
-            </button>
-            <div>
-              <button className="secondary-button" type="button" onClick={() => moveTo(currentIndex - 1)} disabled={currentIndex === 0 || quizState === "evaluating"}>
-                이전
-              </button>
-              <button className="primary-button" type={isLastQuestion ? "submit" : "button"} onClick={isLastQuestion ? undefined : () => {
-                if (!currentQuestion || !answerDraft.trim()) return;
-                const nextAnswers = upsertAnswer(currentQuestion.id, answerDraft.trim());
-                setAnswers(nextAnswers);
-                moveTo(currentIndex + 1, nextAnswers);
-              }} disabled={!answerDraft.trim() || quizState === "evaluating"}>
-                {quizState === "evaluating" ? "평가 중" : quizState === "error" ? "다시 평가하기 →" : isLastQuestion ? "결과 보기 →" : "다음 →"}
-              </button>
-            </div>
-          </div>
-          <p className="usage-note">Commit Mode는 마지막에 한 번만 평가 API를 호출합니다.</p>
-        </form>
+        </div>
       </section>
     </main>
   );
@@ -217,30 +231,34 @@ function clampIndex(index: number, length: number): number {
   return Math.max(0, Math.min(index, length - 1));
 }
 
-function CodePreview({
-  snippets,
-  emptyLabel
+function CodePanel({
+  snippet,
+  title,
+  onClose
 }: {
-  snippets: Array<{ path: string; reason: string; excerpt: string }>;
-  emptyLabel: string;
+  snippet: { path: string; reason: string; excerpt: string };
+  title: string;
+  onClose: () => void;
 }) {
-  if (!snippets.length) {
-    return <p className="code-preview-empty">{emptyLabel}</p>;
-  }
-
   return (
-    <div className="code-preview">
-      <p className="section-label">변경 코드 미리보기</p>
-      {snippets.map((snippet) => (
-        <details key={snippet.path} className="code-preview__item" open={snippets.length === 1}>
-          <summary>
-            <span>{snippet.path}</span>
-            <small>{snippet.reason}</small>
-          </summary>
-          <pre>{snippet.excerpt}</pre>
-        </details>
-      ))}
-    </div>
+    <aside className="quiz-code-panel">
+      <div className="quiz-code-panel__title">
+        <p className="section-label">{title}</p>
+        <button type="button" onClick={onClose}>닫기</button>
+      </div>
+      <div className="quiz-code-panel__header">
+        <strong>{snippet.path}</strong>
+        <span>{snippet.reason}</span>
+      </div>
+      {snippet.excerpt ? (
+        <pre>{snippet.excerpt}</pre>
+      ) : (
+        <div className="code-preview-empty">
+          <strong>미리보기 가능한 diff가 없습니다.</strong>
+          <p>이 파일은 GitHub API에서 patch를 제공하지 않았거나 분석 컨텍스트에 포함되지 않았습니다. 답변할 때는 파일명, 커밋 메시지, 질문의 변경 맥락을 기준으로 설명해주세요.</p>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -248,11 +266,21 @@ function getRelatedSnippets(
   contextFiles: Array<{ path: string; reason: string; excerpt: string }>,
   relatedFiles: string[]
 ) {
-  const snippets = relatedFiles
-    .map((path) => contextFiles.find((file) => file.path === path) ?? contextFiles.find((file) => file.path.endsWith(path) || path.endsWith(file.path)))
-    .filter((file): file is { path: string; reason: string; excerpt: string } => Boolean(file?.excerpt));
+  const snippets = relatedFiles.map((path) => {
+    const matched = contextFiles.find((file) => file.path === path) ?? contextFiles.find((file) => file.path.endsWith(path) || path.endsWith(file.path));
+    return matched ?? { path, reason: "관련 변경 파일로 제시되었지만 diff 미리보기는 제공되지 않았습니다.", excerpt: "" };
+  });
 
   return [...new Map(snippets.map((file) => [file.path, file])).values()].slice(0, 3);
+}
+
+function resolveSnippetPath(snippets: Array<{ path: string }>, relatedFile: string): string {
+  return snippets.find((snippet) => isSelectedRelatedFile(snippet.path, relatedFile))?.path ?? relatedFile;
+}
+
+function isSelectedRelatedFile(snippetPath: string | undefined, relatedFile: string): boolean {
+  if (!snippetPath) return false;
+  return snippetPath === relatedFile || snippetPath.endsWith(relatedFile) || relatedFile.endsWith(snippetPath);
 }
 
 function SiteNav() {

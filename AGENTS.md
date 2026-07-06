@@ -15,11 +15,22 @@ It analyzes public GitHub repositories and commits, generates code-grounded ques
 - Prefer Korean UI copy because the primary target users are Korean.
 - Use concise Korean/English mixed commit messages with prefixes such as `feat:`, `fix:`, `refactor:`, and `chore:`.
 
+## Git Workflow
+
+- `main` is the production branch. Do not implement directly on `main`.
+- `develop` is the integration branch for the next release.
+- Create task branches from `develop`.
+  - `feat/<short-name>` for product changes
+  - `fix/<short-name>` for bug fixes
+  - `chore/<short-name>` for maintenance
+- Keep commits small and scoped.
+- Do not push directly to `main` unless the user explicitly asks.
+
 ## Current Stack
 
 - Web: Next.js App Router, React, TypeScript
-- Current API: Next.js Route Handlers
-- Planned API: FastAPI under `apps/api`
+- API: FastAPI under `apps/api`
+- Web API routes proxy to FastAPI where `BACKEND_API_URL` is configured.
 
 ## Future Monorepo Notes
 

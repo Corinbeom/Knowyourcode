@@ -28,6 +28,7 @@ export default function QuizPage() {
   const [quizState, setQuizState] = useState<QuizState>("answering");
   const [error, setError] = useState("");
   const [evaluateLimit, setEvaluateLimit] = useState<UsageLimit | undefined>();
+  const [selectedSnippetPath, setSelectedSnippetPath] = useState<string | null>(null);
 
   useEffect(() => {
     const storedAnalysis = loadAnalysisResult();
@@ -143,6 +144,7 @@ export default function QuizPage() {
   const isLastQuestion = currentIndex === analysis.questions.length - 1;
   const relatedFiles = currentQuestion.relatedFiles;
   const relatedSnippets = getRelatedSnippets(analysis.contextFiles, relatedFiles);
+  const selectedSnippet = selectedSnippetPath ? relatedSnippets.find((snippet) => snippet.path === selectedSnippetPath) ?? null : null;
 
   return (
     <main>
@@ -164,61 +166,73 @@ export default function QuizPage() {
           <span style={{ width: `${progress}%` }} />
         </div>
 
-        <form className="quiz-card" onSubmit={handleSubmit}>
-          <div className="quiz-question">
-            <div className="quiz-question__meta">
-              <span>{currentQuestion.type}</span>
-              <span>{answeredCount}/{analysis.questions.length} 답변 완료</span>
+        <div className={selectedSnippet ? "quiz-workspace is-code-open" : "quiz-workspace"}>
+          <form className="quiz-card" onSubmit={handleSubmit}>
+            <div className="quiz-question">
+              <div className="quiz-question__meta">
+                <span>{currentQuestion.type}</span>
+                <span>{answeredCount}/{analysis.questions.length} 답변 완료</span>
+              </div>
+              <h2>{currentQuestion.question}</h2>
             </div>
-            <h2>{currentQuestion.question}</h2>
-          </div>
 
-          <aside className="quiz-related">
-            <p className="section-label">관련 파일</p>
-            <ul>
-              {relatedFiles.map((file) => (
-                <li key={file}>{file}</li>
-              ))}
-            </ul>
-            <CodePreview snippets={relatedSnippets} emptyLabel="관련 코드 미리보기가 없습니다." />
-          </aside>
+            <aside className="quiz-related">
+              <p className="section-label">관련 파일</p>
+              <ul>
+                {relatedFiles.map((file) => (
+                  <li key={file}>
+                    <button
+                      type="button"
+                      className={isSelectedRelatedFile(selectedSnippet?.path, file) ? "is-active" : ""}
+                      onClick={() => setSelectedSnippetPath(resolveSnippetPath(relatedSnippets, file))}
+                    >
+                      {file}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </aside>
 
-          <label className="quiz-answer" htmlFor="quizAnswer">
-            <span>내 답변</span>
-            <textarea
-              id="quizAnswer"
-              value={answerDraft}
-              onChange={(event) => {
-                setAnswerDraft(event.target.value);
-                if (quizState === "error") {
-                  setQuizState("answering");
-                  setError("");
-                }
-              }}
-              placeholder="파일명, 처리 흐름, 수정 영향 범위를 연결해서 답변해보세요."
-              maxLength={4000}
-              disabled={quizState === "evaluating"}
-            />
-          </label>
+            <label className="quiz-answer" htmlFor="quizAnswer">
+              <span>내 답변</span>
+              <textarea
+                id="quizAnswer"
+                value={answerDraft}
+                onChange={(event) => {
+                  setAnswerDraft(event.target.value);
+                  if (quizState === "error") {
+                    setQuizState("answering");
+                    setError("");
+                  }
+                }}
+                placeholder="파일명, 처리 흐름, 수정 영향 범위를 연결해서 답변해보세요."
+                maxLength={4000}
+                disabled={quizState === "evaluating"}
+              />
+            </label>
 
-          {quizState === "evaluating" ? <QuizEvaluating /> : null}
-          {quizState === "error" ? <p className="error">{error}</p> : null}
+            {quizState === "evaluating" ? <QuizEvaluating /> : null}
+            {quizState === "error" ? <p className="error">{error}</p> : null}
 
-          <div className="quiz-actions">
-            <button className="secondary-button" type="button" onClick={() => router.push("/setup")} disabled={quizState === "evaluating"}>
-              설정 수정
-            </button>
-            <div>
-              <button className="secondary-button" type="button" onClick={handlePrevious} disabled={currentIndex === 0 || quizState === "evaluating"}>
-                이전
+            <div className="quiz-actions">
+              <button className="secondary-button" type="button" onClick={() => router.push("/setup")} disabled={quizState === "evaluating"}>
+                설정 수정
               </button>
-              <button className="primary-button" type={isLastQuestion ? "submit" : "button"} onClick={isLastQuestion ? undefined : handleNext} disabled={!answerDraft.trim() || quizState === "evaluating"}>
-                {quizState === "evaluating" ? "평가 중" : quizState === "error" ? "다시 평가하기 →" : isLastQuestion ? "결과 보기 →" : "다음 →"}
-              </button>
+              <div>
+                <button className="secondary-button" type="button" onClick={handlePrevious} disabled={currentIndex === 0 || quizState === "evaluating"}>
+                  이전
+                </button>
+                <button className="primary-button" type={isLastQuestion ? "submit" : "button"} onClick={isLastQuestion ? undefined : handleNext} disabled={!answerDraft.trim() || quizState === "evaluating"}>
+                  {quizState === "evaluating" ? "평가 중" : quizState === "error" ? "다시 평가하기 →" : isLastQuestion ? "결과 보기 →" : "다음 →"}
+                </button>
+              </div>
             </div>
-          </div>
-          <p className="usage-note">답변은 문항별 최대 4,000자입니다. 평가는 마지막에 한 번만 진행됩니다.</p>
-        </form>
+            <p className="usage-note">답변은 문항별 최대 4,000자입니다. 평가는 마지막에 한 번만 진행됩니다.</p>
+          </form>
+          {selectedSnippet ? (
+            <CodePanel snippet={selectedSnippet} title="코드 미리보기" onClose={() => setSelectedSnippetPath(null)} />
+          ) : null}
+        </div>
       </section>
     </main>
   );
@@ -236,30 +250,34 @@ function QuizEvaluating() {
   );
 }
 
-function CodePreview({
-  snippets,
-  emptyLabel
+function CodePanel({
+  snippet,
+  title,
+  onClose
 }: {
-  snippets: Array<{ path: string; reason: string; excerpt: string }>;
-  emptyLabel: string;
+  snippet: { path: string; reason: string; excerpt: string };
+  title: string;
+  onClose: () => void;
 }) {
-  if (!snippets.length) {
-    return <p className="code-preview-empty">{emptyLabel}</p>;
-  }
-
   return (
-    <div className="code-preview">
-      <p className="section-label">코드 미리보기</p>
-      {snippets.map((snippet) => (
-        <details key={snippet.path} className="code-preview__item" open={snippets.length === 1}>
-          <summary>
-            <span>{snippet.path}</span>
-            <small>{snippet.reason}</small>
-          </summary>
-          <pre>{snippet.excerpt}</pre>
-        </details>
-      ))}
-    </div>
+    <aside className="quiz-code-panel">
+      <div className="quiz-code-panel__title">
+        <p className="section-label">{title}</p>
+        <button type="button" onClick={onClose}>닫기</button>
+      </div>
+      <div className="quiz-code-panel__header">
+        <strong>{snippet.path}</strong>
+        <span>{snippet.reason}</span>
+      </div>
+      {snippet.excerpt ? (
+        <pre>{snippet.excerpt}</pre>
+      ) : (
+        <div className="code-preview-empty">
+          <strong>미리보기 가능한 코드가 없습니다.</strong>
+          <p>이 파일은 분석 컨텍스트에 포함되지 않았거나 GitHub API에서 본문을 제공하지 않은 파일입니다. 답변할 때는 파일명과 질문의 맥락을 기준으로 설명해주세요.</p>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -267,11 +285,21 @@ function getRelatedSnippets(
   contextFiles: Array<{ path: string; reason: string; excerpt: string }>,
   relatedFiles: string[]
 ) {
-  const snippets = relatedFiles
-    .map((path) => contextFiles.find((file) => file.path === path) ?? contextFiles.find((file) => file.path.endsWith(path) || path.endsWith(file.path)))
-    .filter((file): file is { path: string; reason: string; excerpt: string } => Boolean(file?.excerpt));
+  const snippets = relatedFiles.map((path) => {
+    const matched = contextFiles.find((file) => file.path === path) ?? contextFiles.find((file) => file.path.endsWith(path) || path.endsWith(file.path));
+    return matched ?? { path, reason: "관련 파일로 제시되었지만 미리보기 본문은 제공되지 않았습니다.", excerpt: "" };
+  });
 
   return [...new Map(snippets.map((file) => [file.path, file])).values()].slice(0, 3);
+}
+
+function resolveSnippetPath(snippets: Array<{ path: string }>, relatedFile: string): string {
+  return snippets.find((snippet) => isSelectedRelatedFile(snippet.path, relatedFile))?.path ?? relatedFile;
+}
+
+function isSelectedRelatedFile(snippetPath: string | undefined, relatedFile: string): boolean {
+  if (!snippetPath) return false;
+  return snippetPath === relatedFile || snippetPath.endsWith(relatedFile) || relatedFile.endsWith(snippetPath);
 }
 
 function clampIndex(index: number, length: number): number {
