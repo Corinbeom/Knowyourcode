@@ -8,3 +8,5 @@ Disallow: /result
 Disallow: /commit/analyzing
 Disallow: /commit/quiz
 Disallow: /commit/result
+
+Sitemap: https://knowyourcode.cloud/sitemap.xml
