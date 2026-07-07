@@ -150,10 +150,14 @@ OCI_HOST=168.107.12.35
 OCI_USER=ubuntu
 OCI_SSH_KEY=...
 OCI_APP_DIR=/home/ubuntu/Knowyourcode
+API_PORT=8000
+API_SERVICE_NAME=knowyourcode-api
 ```
 
-서버에서 `ubuntu` 유저가 API 서비스 재시작을 할 수 있도록 sudoers에 아래처럼 등록합니다. `systemctl` 경로는 서버에서 `which systemctl`로 확인합니다.
+`API_PORT`, `API_SERVICE_NAME`은 생략하면 각각 `8000`, `knowyourcode-api`를 사용합니다.
+
+서버에서 `ubuntu` 유저가 API systemd 서비스 파일을 갱신하고 서비스를 재시작할 수 있도록 sudoers에 아래처럼 등록합니다. `systemctl`, `tee` 경로는 서버에서 `which systemctl`, `which tee`로 확인합니다.
 
 ```txt
-ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart knowyourcode-api, /usr/bin/systemctl is-active knowyourcode-api
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/systemd/system/knowyourcode-api.service, /usr/bin/systemctl daemon-reload, /usr/bin/systemctl enable knowyourcode-api, /usr/bin/systemctl restart knowyourcode-api, /usr/bin/systemctl is-active knowyourcode-api
 ```
