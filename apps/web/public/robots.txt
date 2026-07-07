@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /setup
+Disallow: /analyzing
+Disallow: /quiz
+Disallow: /result
+Disallow: /commit/analyzing
+Disallow: /commit/quiz
+Disallow: /commit/result

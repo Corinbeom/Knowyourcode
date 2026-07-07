@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { evaluateAnswer } from "@/lib/ai";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
+import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
 import type { AnalysisResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -54,6 +55,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ evaluation, limits: { evaluate: rateLimit.meta } });
   } catch (error) {
+    captureRouteError(error, {
+      mode: "project",
+      route: "/api/evaluate",
+      provider: "web-local"
+    });
     const message = error instanceof Error ? error.message : "평가 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
@@ -72,6 +78,7 @@ async function proxyEvaluation(path: string, body: unknown, backendAuth: Backend
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    captureBackendResponseError(`/api/${path}`, "project", response.status);
     const message = typeof data.detail === "string" ? data.detail : data.error ?? "평가 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: response.status });
   }

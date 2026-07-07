@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { evaluateCommitQuiz } from "@/lib/ai";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
+import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
 import type { CommitAnalysisResult, QuizAnswer } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -66,6 +67,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ evaluation, limits: { evaluate: rateLimit.meta } });
   } catch (error) {
+    captureRouteError(error, {
+      mode: "commit",
+      route: "/api/evaluate-commit-quiz",
+      provider: "web-local"
+    });
     const message = error instanceof Error ? error.message : "커밋 퀴즈 평가 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
@@ -84,6 +90,7 @@ async function proxyEvaluation(path: string, body: unknown, backendAuth: Backend
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    captureBackendResponseError(`/api/${path}`, "commit", response.status);
     const message = typeof data.detail === "string" ? data.detail : data.error ?? "커밋 퀴즈 평가 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: response.status });
   }
