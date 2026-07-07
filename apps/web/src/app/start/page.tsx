@@ -131,7 +131,7 @@ export default function StartPage() {
               selected={mode}
               title="Commit Mode"
               description="실무 코드리뷰처럼 이번 변경의 의도와 영향 범위를 설명해야 할 때 사용합니다."
-              meta="질문 3개 · 변경 의도/리스크"
+              meta="질문 4개 · 변경 의도/리스크"
               onSelect={selectMode}
             />
           </section>

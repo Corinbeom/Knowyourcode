@@ -47,6 +47,7 @@ export type UnderstandingQuestion = {
   type: QuestionType;
   question: string;
   relatedFiles: string[];
+  evidenceSnippets?: CodeEvidence[];
 };
 
 export type CommitInfo = {
@@ -116,6 +117,7 @@ export type AnalysisResult = {
   report: ProjectReport;
   questions: UnderstandingQuestion[];
   contextFiles: FileSummary[];
+  evidenceSnippets?: CodeEvidence[];
 };
 
 export type AiUsage = {

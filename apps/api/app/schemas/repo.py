@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 AnalysisFocus = Literal["balanced", "frontend", "backend"]
@@ -35,6 +35,15 @@ class FileSummary(BaseModel):
     excerpt: str = ""
 
 
+class CodeEvidence(BaseModel):
+    id: str
+    path: str
+    title: str
+    reason: str
+    excerpt: str = ""
+    kind: str = "other"
+
+
 class ProjectReport(BaseModel):
     oneLineSummary: str
     techStack: list[str]
@@ -52,6 +61,7 @@ class UnderstandingQuestion(BaseModel):
     type: QuestionType
     question: str
     relatedFiles: list[str]
+    evidenceSnippets: list[CodeEvidence] = Field(default_factory=list)
 
 
 class RepoAnalysisResult(BaseModel):
@@ -66,6 +76,7 @@ class RepoAnalysisResult(BaseModel):
     report: ProjectReport
     questions: list[UnderstandingQuestion]
     contextFiles: list[FileSummary]
+    evidenceSnippets: list[CodeEvidence] = Field(default_factory=list)
 
 
 class AnalyzeRepoResponse(BaseModel):

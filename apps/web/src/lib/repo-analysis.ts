@@ -1,4 +1,4 @@
-import type { AnalysisFocus, AnalysisResult, FileSummary, QuestionLevel, QuestionType, RepoInfo, SourceFile } from "./types";
+import type { AnalysisFocus, AnalysisResult, CodeEvidence, FileSummary, QuestionLevel, QuestionType, RepoInfo, SourceFile } from "./types";
 import { extractCodeSignals } from "./code-signals";
 
 const PRIORITY_PATTERNS = [
@@ -8,6 +8,8 @@ const PRIORITY_PATTERNS = [
   /(route|router|controller|service|repository|entity|model|schema|store|auth|config)/i
 ];
 const MAX_EXCERPT_LENGTH = 1_600;
+const MAX_EVIDENCE_SNIPPETS = 24;
+const MAX_REPO_SNIPPET_LENGTH = 1_200;
 const SECTION_EXCERPT_LENGTH = 360;
 const SYMBOL_CONTEXT_LENGTH = 420;
 const MAX_SYMBOL_SNIPPETS = 2;
@@ -22,6 +24,7 @@ export function buildStaticContext(
 ) {
   const selectedFiles = selectContextFiles(files, focus, questionTargets);
   const contextFiles = selectedFiles.map(toFileSummary);
+  const evidenceSnippets = buildRepoEvidenceSnippets(selectedFiles, focus, questionTargets);
   const tree = summarizeTree(files);
   const packageJson = files.find((file) => file.path === "package.json");
 
@@ -33,6 +36,7 @@ export function buildStaticContext(
     questionTargets,
     fileCount: files.length,
     contextFiles,
+    evidenceSnippets,
     tree,
     packageInfo: packageJson ? safeParsePackageJson(packageJson.content) : null
   };
@@ -47,17 +51,23 @@ export function buildFallbackAnalysis(
   questionTargets: string[],
   contextFiles: FileSummary[],
   tree: string[],
-  packageInfo: Record<string, unknown> | null
+  packageInfo: Record<string, unknown> | null,
+  evidenceSnippets: CodeEvidence[] = []
 ): AnalysisResult {
   const stack = inferStack(packageInfo, contextFiles);
   const keyFiles = contextFiles.slice(0, 6);
   const signals = extractCodeSignals(contextFiles, focus);
+  const requestEvidence = pickEvidenceByCapability(evidenceSnippets, supportsRequestOrServiceEvidence, ["entry", "service"], 3);
+  const dataEvidence = pickEvidenceByCapability(evidenceSnippets, supportsDataFlowEvidence, ["data", "service", "entry"], 3);
   const structureFile = pickSummaryFile(contextFiles, ["entry", "ui", "service", "config"])?.path ?? signals[0]?.path ?? keyFiles[0]?.path ?? "핵심 파일";
-  const requestFiles = pickSummaryFiles(contextFiles, ["entry", "service"], 2).map((file) => file.path);
-  const dataFiles = pickSummaryFiles(contextFiles, ["data", "service"], 2).map((file) => file.path);
+  const requestFiles = evidencePaths(requestEvidence);
+  if (!requestFiles.length) requestFiles.push(...pickSummaryFiles(contextFiles, ["entry", "service"], 2).map((file) => file.path));
+  const dataFiles = evidencePaths(dataEvidence);
+  if (!dataFiles.length) dataFiles.push(...pickSummaryFiles(contextFiles, ["data", "service"], 2).map((file) => file.path));
   const impactFiles = pickSummaryFiles(contextFiles, ["service", "ui", "entry", "config"], 2).map((file) => file.path);
   const interviewFiles = pickSummaryFiles(contextFiles, ["entry", "service", "data", "config"], 2).map((file) => file.path);
   const secondaryFile = requestFiles[0] ?? keyFiles[1]?.path ?? structureFile;
+  const dataFile = dataFiles[0] ?? structureFile;
 
   return {
     repo,
@@ -73,6 +83,7 @@ export function buildFallbackAnalysis(
       reason: "LLM 응답을 사용하지 못해 기본 분석으로 대체했습니다."
     },
     contextFiles,
+    evidenceSnippets,
     report: {
       oneLineSummary: `${repo.repo} 저장소의 구조와 핵심 파일을 기반으로 한 초기 코드 이해도 분석입니다.`,
       techStack: stack,
@@ -93,34 +104,178 @@ export function buildFallbackAnalysis(
         id: "q1",
         type: questionTypes[0] ?? "구조 이해",
         question: `${structureFile}의 역할을 기준으로 이 프로젝트의 실행 진입점과 주요 폴더 구조를 설명해주세요.`,
-        relatedFiles: [structureFile]
+        relatedFiles: [structureFile],
+        evidenceSnippets: compactEvidenceList([pickEvidenceForPath(evidenceSnippets, structureFile)])
       },
       {
         id: "q2",
         type: questionTypes[1 % questionTypes.length] ?? "요청 흐름",
         question: `${secondaryFile}에서 시작되는 요청 또는 화면 흐름이 어떤 파일들과 연결되는지 설명해주세요.`,
-        relatedFiles: requestFiles.length ? requestFiles : [secondaryFile]
+        relatedFiles: requestFiles.length ? requestFiles : [secondaryFile],
+        evidenceSnippets: compactEvidenceList(requestEvidence.length ? requestEvidence : (requestFiles.length ? requestFiles : [secondaryFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
       },
       {
         id: "q3",
         type: questionTypes[2 % questionTypes.length] ?? "데이터 흐름",
-        question: "데이터가 어디에서 들어오고 어디로 전달되는지 관련 파일 기준으로 설명해주세요.",
-        relatedFiles: dataFiles.length ? dataFiles : [structureFile]
+        question: `${dataFile}에서 데이터 입력, 검증, 조회 또는 저장 흐름이 어떻게 드러나는지 설명해주세요.`,
+        relatedFiles: dataFiles.length ? dataFiles : [structureFile],
+        evidenceSnippets: compactEvidenceList(dataEvidence.length ? dataEvidence : (dataFiles.length ? dataFiles : [structureFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
       },
       {
         id: "q4",
         type: questionTypes[3 % questionTypes.length] ?? "변경 영향도",
         question: `${structureFile}의 동작을 수정한다면 어떤 영향 범위를 함께 확인해야 하나요?`,
-        relatedFiles: impactFiles.length ? impactFiles : [structureFile]
+        relatedFiles: impactFiles.length ? impactFiles : [structureFile],
+        evidenceSnippets: compactEvidenceList((impactFiles.length ? impactFiles : [structureFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
       },
       {
         id: "q5",
         type: questionTypes[4 % questionTypes.length] ?? "면접형",
         question: `면접이나 코드리뷰에서 ${secondaryFile}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`,
-        relatedFiles: interviewFiles.length ? interviewFiles : [secondaryFile]
+        relatedFiles: interviewFiles.length ? interviewFiles : [secondaryFile],
+        evidenceSnippets: compactEvidenceList((interviewFiles.length ? interviewFiles : [secondaryFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
       }
     ]
   };
+}
+
+function buildRepoEvidenceSnippets(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
+  const guaranteed: CodeEvidence[] = [];
+  const extras: CodeEvidence[] = [];
+
+  for (const file of files) {
+    const snippets = toRepoFileEvidence(file, focus, questionTargets);
+    if (snippets[0]) guaranteed.push(snippets[0]);
+    extras.push(...snippets.slice(1));
+  }
+
+  return dedupeEvidence([...guaranteed, ...extras.sort((a, b) => scoreRepoEvidence(b) - scoreRepoEvidence(a))]).slice(0, Math.max(MAX_EVIDENCE_SNIPPETS, guaranteed.length));
+}
+
+function toRepoFileEvidence(file: SourceFile, focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
+  const chunks: Array<{ title: string; excerpt: string }> = [
+    { title: "file overview", excerpt: file.content.slice(0, MAX_REPO_SNIPPET_LENGTH) },
+    ...extractSymbolChunks(file.content).slice(0, 3),
+    ...extractKeywordChunks(file.content, file.path).slice(0, 3)
+  ];
+
+  return chunks.filter((chunk) => chunk.excerpt.trim()).map((chunk, index) => ({
+    id: `${sanitizeEvidenceId(file.path)}:${index}`,
+    path: file.path,
+    title: `${file.path} ${chunk.title}`,
+    reason: inferFileReason(file.path),
+    excerpt: chunk.excerpt.slice(0, MAX_REPO_SNIPPET_LENGTH),
+    kind: fileLayer(file.path)
+  }));
+}
+
+function extractSymbolChunks(content: string): Array<{ title: string; excerpt: string }> {
+  const patterns = [
+    /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)/gm,
+    /^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z0-9_]+)/gm,
+    /^\s*(?:export\s+)?const\s+([A-Za-z0-9_]+)\s*=/gm,
+    /^\s*def\s+([A-Za-z0-9_]+)\s*\(/gm,
+    /^\s*class\s+([A-Za-z0-9_]+)/gm
+  ];
+  const chunks: Array<{ title: string; excerpt: string }> = [];
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      chunks.push({ title: match[1] ?? "symbol", excerpt: sliceAround(content, match.index ?? 0, MAX_REPO_SNIPPET_LENGTH) });
+      if (chunks.length >= 6) return chunks;
+    }
+  }
+  return chunks;
+}
+
+function extractKeywordChunks(content: string, path: string): Array<{ title: string; excerpt: string }> {
+  const keywordGroups: Array<{ title: string; pattern: RegExp }> = [
+    { title: "error handling", pattern: /\b(except|catch|raise|throw|HTTPError|URLError|ValueError|Exception)\b/i },
+    { title: "request flow", pattern: /\b(Request|fetch|urlopen|router|route|controller|handler|GET|POST|PUT|PATCH|DELETE)\b/i },
+    { title: "data flow", pattern: /\b(schema|model|repository|entity|database|query|save|create|update|delete|find|fetch|parse|validate)\b/i }
+  ];
+
+  if (isConfigFile(path)) {
+    keywordGroups.unshift({ title: "configuration", pattern: /\b(os\.getenv|BaseSettings|Settings|config|env|secret|token|key)\b/i });
+  }
+
+  const chunks: Array<{ title: string; excerpt: string }> = [];
+  const seenRanges = new Set<number>();
+  for (const group of keywordGroups) {
+    const match = group.pattern.exec(content);
+    if (!match || match.index === undefined) continue;
+    const rangeKey = Math.floor(Math.max(match.index - MAX_REPO_SNIPPET_LENGTH / 2, 0) / 160);
+    if (seenRanges.has(rangeKey)) continue;
+    seenRanges.add(rangeKey);
+    chunks.push({ title: group.title, excerpt: sliceAround(content, match.index, MAX_REPO_SNIPPET_LENGTH) });
+  }
+  return chunks;
+}
+
+function sanitizeEvidenceId(path: string): string {
+  return path.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-|-$/g, "") || "unknown";
+}
+
+function scoreRepoEvidence(snippet: CodeEvidence): number {
+  let score = snippet.excerpt.length / 100;
+  if (!snippet.title.endsWith("file overview")) score += 18;
+  if (/function|class|return|async|await|fetch|router|route|controller|service|repository/i.test(snippet.excerpt)) score += 16;
+  return score;
+}
+
+function pickEvidenceForPath(snippets: CodeEvidence[], path: string): CodeEvidence | undefined {
+  return snippets.find((snippet) => snippet.path === path);
+}
+
+function compactEvidenceList(snippets: Array<CodeEvidence | undefined>): CodeEvidence[] {
+  return [...new Map(snippets.filter((snippet): snippet is CodeEvidence => Boolean(snippet)).map((snippet) => [snippet.id, snippet])).values()].slice(0, 3);
+}
+
+function pickEvidenceByCapability(
+  snippets: CodeEvidence[],
+  predicate: (snippet: CodeEvidence) => boolean,
+  layers: CodeEvidence["kind"][],
+  limit: number
+): CodeEvidence[] {
+  const selected: CodeEvidence[] = [];
+  for (const layer of layers) {
+    const snippet = snippets.find((candidate) => candidate.kind === layer && predicate(candidate) && !selected.includes(candidate));
+    if (snippet) selected.push(snippet);
+    if (selected.length >= limit) return selected;
+  }
+  for (const snippet of snippets) {
+    if (predicate(snippet) && !selected.includes(snippet)) selected.push(snippet);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+
+function evidencePaths(snippets: CodeEvidence[]): string[] {
+  return [...new Set(snippets.map((snippet) => snippet.path).filter(Boolean))];
+}
+
+function supportsRequestOrServiceEvidence(snippet: CodeEvidence): boolean {
+  return supportsRequestFlowEvidence(snippet) || snippet.kind === "service";
+}
+
+function supportsRequestFlowEvidence(snippet: CodeEvidence): boolean {
+  const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
+  if (snippet.kind === "config" && /package\.json|config|env|settings|docker/i.test(snippet.path)) return false;
+  return /route|router|controller|handler|endpoint|api\//i.test(snippet.path)
+    || /\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b/i.test(text);
+}
+
+function supportsDataFlowEvidence(snippet: CodeEvidence): boolean {
+  const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
+  if (snippet.kind === "config") return false;
+  if (/tally|analytics|track\(/i.test(text) && !/\b(fetch|axios|save|query|repository|database|request\.json|FormData|localStorage)\b/i.test(text)) {
+    return false;
+  }
+  return ["data", "service", "entry"].includes(snippet.kind)
+    && /\b(schema|model|repository|entity|database|query\w*|save\w*|create\w*|update\w*|delete\w*|find\w*|fetch\w*|parse\w*|validate\w*|request\.json|response\.json|json\.loads|FormData|localStorage)\b/i.test(text);
+}
+
+function dedupeEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
+  return [...new Map(snippets.map((snippet) => [snippet.id, snippet])).values()];
 }
 
 function rankFiles(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[] = []): SourceFile[] {
@@ -214,7 +369,7 @@ function matchesFocus(path: string, focus: AnalysisFocus): boolean {
 }
 
 function isClientFacingFile(path: string): boolean {
-  return /(^|\/)(frontend|client|web|app|pages|components|views|screens|ui)(\/|$)|\.(tsx|jsx|vue|svelte|astro)$/i.test(path);
+  return /(^|\/)(frontend|client|web|pages|components|views|screens|ui)(\/|$)|(^|\/)src\/app\/|\.(tsx|jsx|vue|svelte|astro)$/i.test(path);
 }
 
 function isServerFacingFile(path: string): boolean {
@@ -222,7 +377,9 @@ function isServerFacingFile(path: string): boolean {
 }
 
 function isEntrypointFile(path: string): boolean {
-  return /(^|\/)(api|routes?|controllers?)(\/|$)|route\.(ts|tsx|js|jsx)$|router|controller|handler/i.test(path);
+  return /(^|\/)(app\/api|src\/app\/api|pages\/api|routes?|controllers?|endpoints?)\/.+\.(py|ts|tsx|js|jsx|java|kt|go|rs)$/i.test(path)
+    || /(^|\/)(route|router|controller|handler)\.(py|ts|tsx|js|jsx)$/i.test(path)
+    || /(^|\/)[A-Za-z0-9_.-]*(route|router|controller|handler|endpoint)[A-Za-z0-9_.-]*\.(py|ts|tsx|js|jsx|java|kt|go|rs)$/i.test(path);
 }
 
 function isBusinessLogicFile(path: string): boolean {
@@ -238,7 +395,7 @@ function isConfigFile(path: string): boolean {
 }
 
 function isUiFile(path: string): boolean {
-  return /(^|\/)(components|pages|app|views|screens|ui)(\/|$)|page\.(tsx|jsx|ts|js)$|component/i.test(path);
+  return /(^|\/)(components|pages|views|screens|ui)(\/|$)|(^|\/)src\/app\/|page\.(tsx|jsx|ts|js)$|component/i.test(path);
 }
 
 function isTestFile(path: string): boolean {
@@ -276,9 +433,9 @@ function pickSummaryFiles(files: FileSummary[], layers: Array<ReturnType<typeof 
 
 function fileLayer(path: string): "entry" | "service" | "data" | "ui" | "config" | "test" | "other" {
   if (isEntrypointFile(path)) return "entry";
+  if (isUiFile(path)) return "ui";
   if (isBusinessLogicFile(path)) return "service";
   if (isDataAccessFile(path)) return "data";
-  if (isUiFile(path)) return "ui";
   if (isConfigFile(path) || /auth|security|middleware|error|exception/i.test(path)) return "config";
   if (isTestFile(path)) return "test";
   return "other";

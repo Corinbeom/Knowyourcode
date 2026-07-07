@@ -4,6 +4,7 @@ import { fetchRepoFiles, parseGitHubUrl } from "@/lib/github";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
+import { sanitizeRepoAnalysis } from "@/lib/repo-question-sanitizer";
 import type { AnalysisFocus, QuestionLevel, QuestionType } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -69,12 +70,13 @@ export async function POST(request: Request) {
       questionTargets,
       context.contextFiles,
       context.tree,
-      context.packageInfo
+      context.packageInfo,
+      context.evidenceSnippets
     );
     const analysis = await generateAnalysis(context, fallback);
 
     return NextResponse.json({
-      analysis,
+      analysis: sanitizeRepoAnalysis(analysis),
       limits: {
         analyze: rateLimit.meta
       }
@@ -139,6 +141,7 @@ async function proxyAnalyzeRepo(
 
   return NextResponse.json({
     ...data,
+    analysis: data.analysis ? sanitizeRepoAnalysis(data.analysis) : data.analysis,
     limits: { backend: data.limits }
   });
 }

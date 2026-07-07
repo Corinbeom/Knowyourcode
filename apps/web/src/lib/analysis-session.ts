@@ -25,6 +25,7 @@ export const DEFAULT_QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 
 export function saveAnalysisSetup(setup: AnalysisSetup) {
   if (typeof window === "undefined") return;
   window.sessionStorage.setItem(SETUP_KEY, JSON.stringify(setup));
+  clearAnalysisResult();
 }
 
 export function loadAnalysisSetup(): AnalysisSetup | null {
@@ -41,6 +42,12 @@ export function saveAnalysisResult(analysis: AnalysisResult) {
 export function loadAnalysisResult(): AnalysisResult | null {
   if (typeof window === "undefined") return null;
   return parseJson<AnalysisResult>(window.sessionStorage.getItem(RESULT_KEY));
+}
+
+export function clearAnalysisResult() {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(RESULT_KEY);
+  clearQuizSession();
 }
 
 export function saveQuizSession(session: QuizSession) {
