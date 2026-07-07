@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.observability import set_api_sentry_context
 from app.schemas.repo import AnalyzeRepoRequest, AnalyzeRepoResponse
 from app.security import authenticated_quota_limiter, consume_authenticated_quota
 from app.services.github_repo import fetch_repo_files, parse_github_repo_url
@@ -19,6 +20,7 @@ repo_quota_limit = authenticated_quota_limiter("analysis")
 
 @router.post("/analyze", response_model=AnalyzeRepoResponse)
 def analyze_repo(payload: AnalyzeRepoRequest, quota: dict = Depends(repo_quota_limit)) -> dict:
+    set_api_sentry_context(mode="project", route="/analyze", provider="api")
     try:
         repo = parse_github_repo_url(payload.url)
         files = fetch_repo_files(repo)

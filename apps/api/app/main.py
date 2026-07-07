@@ -4,6 +4,10 @@ from app.config import load_environment
 
 load_environment()
 
+from app.observability import init_sentry
+
+init_sentry()
+
 from app.api.commit import router as commit_router
 from app.api.evaluation import router as evaluation_router
 from app.api.quota import router as quota_router

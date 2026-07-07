@@ -4,6 +4,7 @@ import { buildCommitStaticContext, buildFallbackCommitAnalysis } from "@/lib/com
 import { fetchCommitChanges, parseGitHubCommitUrl } from "@/lib/github";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
+import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
 
 export const runtime = "nodejs";
 const ANALYZE_LIMIT_PER_HOUR = Number(process.env.ANALYZE_LIMIT_PER_HOUR ?? 5);
@@ -48,6 +49,11 @@ export async function POST(request: Request) {
       }
     });
   } catch (error) {
+    captureRouteError(error, {
+      mode: "commit",
+      route: "/api/analyze-commit",
+      provider: "web-local"
+    });
     const message = error instanceof Error ? error.message : "커밋 분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
@@ -66,6 +72,7 @@ async function proxyAnalyzeCommit(url: string, backendAuth: BackendAuth): Promis
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    captureBackendResponseError("/api/analyze-commit", "commit", response.status);
     const message = typeof data.detail === "string" ? data.detail : data.error ?? "커밋 분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: response.status });
   }
