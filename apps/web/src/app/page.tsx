@@ -7,6 +7,8 @@ import { track } from "@vercel/analytics";
 import { AuthButton } from "./auth-button";
 import { TallyFeedbackButton } from "./tally-feedback-button";
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://knowyourcode.cloud";
+
 const CORE_QUESTIONS = [
   "사용자의 요청은 어떤 파일들을 거쳐 처리되나요?",
   "데이터는 어디서 생성되고, 어디서 검증되고, 어디에 저장되나요?",
@@ -113,6 +115,7 @@ export default function Home() {
 
   return (
     <main>
+      <JsonLd />
       <SiteNav onStartClick={() => goStart("nav")} />
       <section className="hero landing-hero" id="start">
         <div className="hero__inner">
@@ -324,6 +327,64 @@ export default function Home() {
       <FeedbackCta />
       <FloatingStartCta onClick={() => goStart("floating")} />
     </main>
+  );
+}
+
+function JsonLd() {
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        name: "KnowYourCode",
+        applicationCategory: "DeveloperApplication",
+        operatingSystem: "Web",
+        url: SITE_URL,
+        description:
+          "GitHub 저장소와 커밋을 분석해 실제 코드 근거 기반 질문으로 프로젝트 이해도를 검증하는 AI 코드 이해도 테스트 서비스",
+        offers: {
+          "@type": "Offer",
+          price: "0",
+          priceCurrency: "KRW"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        mainEntity: [
+          {
+            "@type": "Question",
+            name: "KnowYourCode는 어떤 서비스인가요?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "GitHub 저장소나 커밋 URL을 분석하고 요청 흐름, 데이터 흐름, 변경 영향도 질문을 생성해 코드 이해도를 검증하는 서비스입니다."
+            }
+          },
+          {
+            "@type": "Question",
+            name: "어떤 GitHub URL을 분석할 수 있나요?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "공개 GitHub repository URL과 공개 commit URL을 분석할 수 있습니다."
+            }
+          },
+          {
+            "@type": "Question",
+            name: "코드 근거 기반 질문은 무엇인가요?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "AI가 일반적인 질문을 만드는 것이 아니라 실제 파일, 코드 조각, 커밋 변경사항을 근거로 답변 가능한 질문을 생성하는 방식입니다."
+            }
+          }
+        ]
+      }
+    ]
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+    />
   );
 }
 
