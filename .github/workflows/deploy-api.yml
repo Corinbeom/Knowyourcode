@@ -67,7 +67,14 @@ jobs:
             sudo /usr/bin/systemctl daemon-reload
             sudo /usr/bin/systemctl enable "${SERVICE_NAME}"
             sudo /usr/bin/systemctl restart "${SERVICE_NAME}"
-            sudo /usr/bin/systemctl is-active --quiet "${SERVICE_NAME}"
 
-            sleep 2
-            curl -fsS "http://127.0.0.1:${API_PORT}/health"
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if sudo /usr/bin/systemctl is-active --quiet "${SERVICE_NAME}" && curl -fsS "http://127.0.0.1:${API_PORT}/health"; then
+                exit 0
+              fi
+              sleep 2
+            done
+
+            sudo /usr/bin/systemctl status "${SERVICE_NAME}" --no-pager
+            sudo /usr/bin/journalctl -u "${SERVICE_NAME}" -n 120 --no-pager
+            exit 1
