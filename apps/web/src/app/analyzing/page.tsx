@@ -38,6 +38,7 @@ export default function AnalyzingPage() {
   const startedRef = useRef(false);
   const [setup, setSetup] = useState<AnalysisSetup | null>(null);
   const [activeStep, setActiveStep] = useState(0);
+  const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -83,7 +84,11 @@ export default function AnalyzingPage() {
         questionLevel: setup?.questionLevel ?? "standard"
       });
       window.clearInterval(interval);
-      router.push("/quiz");
+      setActiveStep(ANALYSIS_STEPS.length - 1);
+      setIsComplete(true);
+      window.setTimeout(() => {
+        router.push("/quiz");
+      }, 450);
     }
 
     analyze().catch((caughtError) => {
@@ -115,7 +120,7 @@ export default function AnalyzingPage() {
             </div>
           </div>
         </div>
-        <AnalysisProgress activeStep={activeStep} isError={Boolean(error)} />
+        <AnalysisProgress activeStep={activeStep} isComplete={isComplete} isError={Boolean(error)} />
         {error ? (
           <div className="analysis-error">
             <p className="error">{error}</p>
@@ -134,25 +139,30 @@ export default function AnalyzingPage() {
   );
 }
 
-function AnalysisProgress({ activeStep, isError }: { activeStep: number; isError: boolean }) {
+function AnalysisProgress({ activeStep, isComplete, isError }: { activeStep: number; isComplete: boolean; isError: boolean }) {
+  const isWaitingForApi = !isComplete && !isError && activeStep === ANALYSIS_STEPS.length - 1;
+
   return (
     <section className="analysis-progress">
       <div className="analysis-progress__header">
         <div>
           <p className="section-label">분석 진행 상황</p>
-          <h2>{isError ? "분석을 완료하지 못했습니다" : "저장소를 읽고 있습니다"}</h2>
+          <h2>{isError ? "분석을 완료하지 못했습니다" : isComplete ? "분석이 완료되었습니다" : isWaitingForApi ? "마지막 리포트를 생성하는 중입니다" : "저장소를 읽고 있습니다"}</h2>
+          {isWaitingForApi ? (
+            <p>저장소 크기와 GitHub 응답 속도에 따라 1분 이상 걸릴 수 있습니다.</p>
+          ) : null}
         </div>
         <span>{Math.min(activeStep + 1, ANALYSIS_STEPS.length)} / {ANALYSIS_STEPS.length}</span>
       </div>
       <ol>
         {ANALYSIS_STEPS.map((step, index) => {
-          const status = index < activeStep ? "done" : index === activeStep && !isError ? "active" : "pending";
+          const status = isComplete || index < activeStep ? "done" : index === activeStep && !isError ? "active" : "pending";
           return (
             <li className={`analysis-step is-${status}`} key={step.title}>
               <span className="analysis-step__dot">{status === "done" ? "✓" : status === "active" ? "…" : ""}</span>
               <div>
                 <strong>{step.title}</strong>
-                <p>{status === "pending" ? "대기 중" : step.description}</p>
+                <p>{status === "pending" ? "대기 중" : index === ANALYSIS_STEPS.length - 1 && isWaitingForApi ? "질문과 코드 근거를 묶어 최종 리포트를 정리하고 있습니다." : step.description}</p>
               </div>
               <small>{status === "pending" ? "queued" : step.meta}</small>
             </li>

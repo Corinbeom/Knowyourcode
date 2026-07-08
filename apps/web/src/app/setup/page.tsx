@@ -19,8 +19,10 @@ export default function SetupPage() {
   const [setup, setSetup] = useState<AnalysisSetup | null>(null);
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [quotaError, setQuotaError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const analysisRemaining = effectiveRemaining(quota?.analysis);
   const isQuotaExhausted = analysisRemaining !== null && analysisRemaining <= 0;
+  const isCheckingAuth = status === "loading";
 
   useEffect(() => {
     const stored = loadAnalysisSetup();
@@ -59,16 +61,20 @@ export default function SetupPage() {
   if (!setup) return null;
 
   function updateSetup(next: Partial<AnalysisSetup>) {
+    if (isSubmitting) return;
     setSetup((current) => current ? { ...current, ...next } : current);
   }
 
   function handleAnalyze() {
+    if (isSubmitting || isCheckingAuth) return;
     if (!setup?.url) return;
     if (!session?.user?.githubId) {
+      setIsSubmitting(true);
       signIn("github");
       return;
     }
     if (isQuotaExhausted) return;
+    setIsSubmitting(true);
     saveAnalysisSetup(setup);
     router.push("/analyzing");
   }
@@ -176,16 +182,33 @@ export default function SetupPage() {
 
         <div className="setup-actions">
           <QuotaNotice quota={quota} error={quotaError} />
-          <button className="secondary-button" type="button" onClick={() => router.push("/")}>
+          <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={isSubmitting}>
             저장소 다시 입력
           </button>
-          <button className="primary-button" type="button" onClick={handleAnalyze} disabled={isQuotaExhausted}>
-            {isQuotaExhausted ? "오늘 분석 가능 횟수를 모두 사용했습니다" : status === "authenticated" ? "분석 시작 →" : "GitHub 로그인 후 분석 시작 →"}
+          <button className="primary-button" type="button" onClick={handleAnalyze} disabled={isQuotaExhausted || isCheckingAuth || isSubmitting}>
+            {buttonLabel({ isQuotaExhausted, isCheckingAuth, isSubmitting, isAuthenticated: status === "authenticated" })}
           </button>
         </div>
       </section>
     </main>
   );
+}
+
+function buttonLabel({
+  isQuotaExhausted,
+  isCheckingAuth,
+  isSubmitting,
+  isAuthenticated
+}: {
+  isQuotaExhausted: boolean;
+  isCheckingAuth: boolean;
+  isSubmitting: boolean;
+  isAuthenticated: boolean;
+}): string {
+  if (isQuotaExhausted) return "오늘 분석 가능 횟수를 모두 사용했습니다";
+  if (isCheckingAuth) return "로그인 상태 확인 중...";
+  if (isSubmitting) return isAuthenticated ? "분석 준비 중..." : "GitHub 로그인으로 이동 중...";
+  return isAuthenticated ? "분석 시작 →" : "GitHub 로그인 후 분석 시작 →";
 }
 
 function QuotaNotice({ quota, error }: { quota: QuotaStatus | null; error: string }) {
