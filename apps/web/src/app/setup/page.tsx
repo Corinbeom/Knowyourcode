@@ -180,6 +180,8 @@ export default function SetupPage() {
           </div>
         </section>
 
+        <SetupSelectionSummary setup={setup} />
+
         <div className="setup-actions">
           <QuotaNotice quota={quota} error={quotaError} />
           <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={isSubmitting}>
@@ -191,6 +193,32 @@ export default function SetupPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function SetupSelectionSummary({ setup }: { setup: AnalysisSetup }) {
+  return (
+    <section className="setup-summary" aria-label="선택한 분석 설정">
+      <div>
+        <p className="section-label">선택 요약</p>
+        <h2>이 설정으로 질문을 생성합니다.</h2>
+      </div>
+      <div className="setup-summary__grid">
+        <SummaryItem label="분석 관점" value={formatFocusLabel(setup.focus)} />
+        <SummaryItem label="난이도" value={formatQuestionLevelLabel(setup.questionLevel)} />
+        <SummaryItem label="질문 유형" value={formatQuestionTypesLabel(setup.questionTypes)} />
+        <SummaryItem label="관심 기능" value={setup.questionTargets.trim() || "전체 기능"} />
+      </div>
+    </section>
+  );
+}
+
+function SummaryItem({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="setup-summary__item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
   );
 }
 
@@ -231,6 +259,23 @@ function toggleQuestionType(current: QuestionType[], type: QuestionType): Questi
   const withoutType = current.filter((item) => item !== type);
   if (withoutType.length !== current.length) return withoutType.length ? withoutType : DEFAULT_QUESTION_TYPES;
   return [...current, type];
+}
+
+function formatFocusLabel(focus: AnalysisFocus): string {
+  if (focus === "frontend") return "프론트엔드 중심";
+  if (focus === "backend") return "백엔드 중심";
+  return "전체 균형";
+}
+
+function formatQuestionLevelLabel(questionLevel: QuestionLevel): string {
+  if (questionLevel === "basic") return "기초";
+  if (questionLevel === "deep") return "심화";
+  return "보통";
+}
+
+function formatQuestionTypesLabel(questionTypes: QuestionType[]): string {
+  if (questionTypes.length === DEFAULT_QUESTION_TYPES.length) return "전체";
+  return questionTypes.join(", ");
 }
 
 function FocusOption({
