@@ -16,3 +16,4 @@ lovabledesign/
 __pycache__/
 *.py[cod]
 .venv/
+docs/flow-design-review.md
