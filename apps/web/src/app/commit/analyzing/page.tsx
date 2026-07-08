@@ -29,6 +29,7 @@ function CommitAnalyzingContent() {
   const [activeStep, setActiveStep] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState("");
+  const isWaitingForApi = !isComplete && !error && activeStep === ANALYSIS_STEPS.length - 1;
 
   useEffect(() => {
     if (!url) {
@@ -110,7 +111,10 @@ function CommitAnalyzingContent() {
           <div className="analysis-progress__header">
             <div>
               <p className="section-label">분석 진행 상황</p>
-              <h2>{error ? "커밋 분석을 완료하지 못했습니다" : isComplete ? "커밋 분석이 완료되었습니다" : "변경 사항을 읽고 있습니다"}</h2>
+              <h2>{error ? "커밋 분석을 완료하지 못했습니다" : isComplete ? "커밋 분석이 완료되었습니다" : isWaitingForApi ? "변경 코드 근거를 정리하는 중입니다" : "변경 사항을 읽고 있습니다"}</h2>
+              {isWaitingForApi ? (
+                <p>커밋 diff가 크거나 LLM 응답이 늦으면 잠시 더 걸릴 수 있습니다.</p>
+              ) : null}
             </div>
             <span>{Math.min(activeStep + 1, ANALYSIS_STEPS.length)} / {ANALYSIS_STEPS.length}</span>
           </div>
@@ -122,7 +126,7 @@ function CommitAnalyzingContent() {
                   <span className="analysis-step__dot">{status === "done" ? "✓" : status === "active" ? "…" : ""}</span>
                   <div>
                     <strong>{title}</strong>
-                    <p>{status === "pending" ? "대기 중" : description}</p>
+                    <p>{status === "pending" ? "대기 중" : index === ANALYSIS_STEPS.length - 1 && isWaitingForApi ? "변경 의도, 영향 범위, 테스트 리스크를 질문으로 묶고 있습니다." : description}</p>
                   </div>
                   <small>{status === "pending" ? "queued" : "commit diff"}</small>
                 </li>
