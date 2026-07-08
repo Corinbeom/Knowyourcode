@@ -62,22 +62,31 @@ export default function ResultPage() {
 }
 
 function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; evaluation: QuizEvaluationResult }) {
+  const weakest = findWeakestQuestion(analysis, evaluation);
+
   return (
-    <section className="result-summary">
-      <div>
-        <p className="section-label">최종 결과</p>
-        <h1>{analysis.repo.owner}/{analysis.repo.repo}</h1>
-        <p>{evaluation.summary}</p>
-        <div className="report__badges">
-          <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
-          <div className="level-chip">{formatQuestionLevelLabel(analysis.questionLevel)}</div>
-          <div className="type-chip">{formatQuestionTypesLabel(analysis.questionTypes)}</div>
-          {analysis.questionTargets.length ? <div className="target-chip">{analysis.questionTargets.join(", ")}</div> : null}
+    <section className="result-summary-block">
+      <div className="result-summary">
+        <div>
+          <p className="section-label">최종 결과</p>
+          <h1>{analysis.repo.owner}/{analysis.repo.repo}</h1>
+          <p>{evaluation.summary}</p>
+          <div className="report__badges">
+            <div className="focus-chip">{formatFocusLabel(analysis.focus)}</div>
+            <div className="level-chip">{formatQuestionLevelLabel(analysis.questionLevel)}</div>
+            <div className="type-chip">{formatQuestionTypesLabel(analysis.questionTypes)}</div>
+            {analysis.questionTargets.length ? <div className="target-chip">{analysis.questionTargets.join(", ")}</div> : null}
+          </div>
+        </div>
+        <div className="result-score">
+          <strong>{evaluation.averageScore}</strong>
+          <span>/ 100 평균 점수</span>
         </div>
       </div>
-      <div className="result-score">
-        <strong>{evaluation.averageScore}</strong>
-        <span>평균 점수</span>
+      <div className="result-overview-grid" aria-label="결과 핵심 요약">
+        <ResultOverviewCard eyebrow="가장 약한 문항" title={weakest ? `${weakest.type} · ${weakest.score}점` : "문항 없음"} description={weakest?.question ?? "문항별 평가가 아직 없습니다."} />
+        <ResultOverviewCard eyebrow="다시 볼 파일" title={shortListTitle(evaluation.reviewFiles, "추천 파일 없음")} description={evaluation.weaknesses[0] ?? "보완할 부분이 명확하게 감지되지 않았습니다."} />
+        <ResultOverviewCard eyebrow="다음 학습 포인트" title={scoreSummary(evaluation.averageScore)} description={evaluation.weaknesses[1] ?? evaluation.strengths[0] ?? "질문별 피드백을 기준으로 코드 근거를 다시 연결해보세요."} />
       </div>
     </section>
   );
@@ -210,7 +219,6 @@ function QuizResultView({
           type={selectedQuestion.type}
           answer={answerMap.get(selectedEvaluation.questionId) ?? ""}
           evaluation={selectedEvaluation}
-          total={questionCount}
         />
         <button className="question-arrow" type="button" onClick={() => moveQuestion(1)} aria-label="다음 문항">
           &gt;
@@ -225,15 +233,13 @@ function QuestionResultCard({
   question,
   type,
   answer,
-  evaluation,
-  total
+  evaluation
 }: {
   index: number;
   question: string;
   type: QuestionType;
   answer: string;
   evaluation: QuestionEvaluation;
-  total: number;
 }) {
   return (
     <article className="question-result-card">
@@ -243,8 +249,7 @@ function QuestionResultCard({
           <h4>{question}</h4>
         </div>
         <div className="question-result-card__score">
-          <strong>{evaluation.score}</strong>
-          <small>{index + 1} / {total}</small>
+          <strong>{evaluation.score}점</strong>
         </div>
       </div>
       <div className="answer-review">
@@ -271,6 +276,39 @@ function QuestionResultCard({
       </div>
     </article>
   );
+}
+
+function ResultOverviewCard({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return (
+    <article className="result-overview-card">
+      <span>{eyebrow}</span>
+      <strong>{title}</strong>
+      <p>{description}</p>
+    </article>
+  );
+}
+
+function findWeakestQuestion(analysis: AnalysisResult, evaluation: QuizEvaluationResult): { type: QuestionType; question: string; score: number } | null {
+  const weakest = [...evaluation.questionEvaluations].sort((a, b) => a.score - b.score)[0];
+  if (!weakest) return null;
+  const question = analysis.questions.find((candidate) => candidate.id === weakest.questionId);
+  if (!question) return null;
+  return {
+    type: question.type,
+    question: question.question,
+    score: weakest.score
+  };
+}
+
+function scoreSummary(score: number): string {
+  if (score >= 80) return "코드 흐름을 꽤 안정적으로 설명했습니다.";
+  if (score >= 60) return "핵심 흐름은 잡았지만 근거 연결을 더 보강해야 합니다.";
+  return "파일 역할과 코드 근거를 다시 확인하는 것이 좋습니다.";
+}
+
+function shortListTitle(items: string[], fallback: string): string {
+  if (!items.length) return fallback;
+  return items.slice(0, 2).join(" · ");
 }
 
 function PricingCta() {

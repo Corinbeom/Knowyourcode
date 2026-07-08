@@ -2,6 +2,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.observability import set_api_sentry_context
 from app.schemas.evaluation import (
     EvaluateAnswerRequest,
     EvaluateAnswerResponse,
@@ -17,6 +18,7 @@ evaluate_quota_limit = authenticated_quota_limiter("evaluation")
 
 @router.post("/evaluate", response_model=EvaluateAnswerResponse)
 def evaluate_single_answer(payload: EvaluateAnswerRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
+    set_api_sentry_context(mode="project", route="/evaluate", provider="api")
     answer = payload.answer.strip()
     validate_answer(answer)
     try:
@@ -28,6 +30,7 @@ def evaluate_single_answer(payload: EvaluateAnswerRequest, quota: dict = Depends
 
 @router.post("/evaluate-quiz", response_model=EvaluateQuizResponse)
 def evaluate_repo_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
+    set_api_sentry_context(mode="project", route="/evaluate-quiz", provider="api")
     answers = normalize_answers(payload.analysis, payload.answers)
     evaluation = evaluate_quiz(payload.analysis, answers)
     return {"evaluation": evaluation, "limits": consume_authenticated_quota(quota)}
@@ -35,6 +38,7 @@ def evaluate_repo_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evalu
 
 @router.post("/evaluate-commit-quiz", response_model=EvaluateQuizResponse)
 def evaluate_commit_quiz(payload: EvaluateQuizRequest, quota: dict = Depends(evaluate_quota_limit)) -> dict:
+    set_api_sentry_context(mode="commit", route="/evaluate-commit-quiz", provider="api")
     answers = normalize_answers(payload.analysis, payload.answers)
     evaluation = evaluate_quiz(payload.analysis, answers, commit_mode=True)
     return {"evaluation": evaluation, "limits": consume_authenticated_quota(quota)}

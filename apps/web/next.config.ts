@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   experimental: {
@@ -8,4 +9,20 @@ const nextConfig: NextConfig = {
   }
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  telemetry: false,
+  silent: true,
+  sourcemaps: {
+    disable: true
+  },
+  release: {
+    create: false
+  },
+  suppressOnRouterTransitionStartWarning: true,
+  webpack: {
+    treeshake: {
+      removeDebugLogging: true,
+      removeTracing: true
+    }
+  }
+});

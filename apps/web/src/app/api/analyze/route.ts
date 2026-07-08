@@ -5,6 +5,7 @@ import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/b
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
 import { sanitizeRepoAnalysis } from "@/lib/repo-question-sanitizer";
+import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
 import type { AnalysisFocus, QuestionLevel, QuestionType } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -82,6 +83,11 @@ export async function POST(request: Request) {
       }
     });
   } catch (error) {
+    captureRouteError(error, {
+      mode: "project",
+      route: "/api/analyze",
+      provider: "web-local"
+    });
     const message = error instanceof Error ? error.message : "분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
@@ -135,6 +141,7 @@ async function proxyAnalyzeRepo(
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    captureBackendResponseError("/api/analyze", "project", response.status);
     const message = typeof data.detail === "string" ? data.detail : data.error ?? "분석 중 오류가 발생했습니다.";
     return NextResponse.json({ error: message }, { status: response.status });
   }
