@@ -7,7 +7,12 @@ from app.services.commit_analysis import (
     build_fallback_commit_analysis,
     split_patch_hunks,
 )
-from app.services.llm import is_question_evidence_aligned, normalize_commit_questions, refine_commit_question_evidence
+from app.services.llm import (
+    enforce_commit_question_quality,
+    is_question_evidence_aligned,
+    normalize_commit_questions,
+    refine_commit_question_evidence,
+)
 
 
 def sample_commit_changes(files):
@@ -137,6 +142,65 @@ class CommitEvidenceTest(unittest.TestCase):
 
         self.assertTrue(is_question_evidence_aligned(refined[0]))
         self.assertEqual(refined[0]["evidenceSnippets"][0]["id"], route_evidence["id"])
+
+    def test_quality_guard_rewrites_question_when_explicit_path_mismatches_evidence(self):
+        route_evidence = {
+            "id": "route.ts:0",
+            "path": "src/app/api/evaluate-commit-quiz/route.ts",
+            "title": "src/app/api/evaluate-commit-quiz/route.ts POST",
+            "reason": "커밋 평가 API 변경입니다.",
+            "excerpt": "export async function POST(request: Request) { return evaluateCommitQuiz(input); }",
+            "kind": "modified",
+        }
+        ai_evidence = {
+            "id": "ai.ts:0",
+            "path": "src/lib/ai.ts",
+            "title": "src/lib/ai.ts evaluateCommitQuiz",
+            "reason": "평가 프롬프트 변경입니다.",
+            "excerpt": "export async function evaluateCommitQuiz(input) { return callModel(input); }",
+            "kind": "modified",
+        }
+        question = {
+            "id": "q4",
+            "type": "리뷰형",
+            "question": "코드 리뷰에서 src/app/api/evaluate-commit-quiz/route.ts 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?",
+            "relatedFiles": ["src/app/api/evaluate-commit-quiz/route.ts"],
+            "evidenceSnippets": [ai_evidence],
+        }
+
+        guarded = enforce_commit_question_quality([question], [question], [ai_evidence, route_evidence])
+
+        self.assertNotIn("route.ts", guarded[0]["question"])
+        self.assertEqual(guarded[0]["relatedFiles"], ["src/lib/ai.ts"])
+        self.assertEqual(guarded[0]["evidenceSnippets"][0]["id"], "ai.ts:0")
+
+    def test_quality_guard_rewrites_duplicate_commit_questions(self):
+        evidence = [
+            {
+                "id": f"file-{index}.ts:0",
+                "path": f"src/file-{index}.ts",
+                "title": f"src/file-{index}.ts change",
+                "reason": "변경 파일입니다.",
+                "excerpt": "export function run() { return true; }",
+                "kind": "modified",
+            }
+            for index in range(1, 5)
+        ]
+        questions = [
+            {
+                "id": f"q{index}",
+                "type": "리뷰형",
+                "question": "코드 리뷰에서 src/file-1.ts 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?",
+                "relatedFiles": ["src/file-1.ts"],
+                "evidenceSnippets": [evidence[0]],
+            }
+            for index in range(1, 5)
+        ]
+
+        guarded = enforce_commit_question_quality(questions, questions, evidence)
+
+        self.assertEqual(len({question["question"] for question in guarded}), 4)
+        self.assertEqual(len({question["relatedFiles"][0] for question in guarded}), 4)
 
     @patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
     @patch("app.services.llm.call_groq")
