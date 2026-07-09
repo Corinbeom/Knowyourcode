@@ -6,6 +6,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from app.services.redaction import redact_secrets
+
 try:
     import certifi
 except ImportError:  # pragma: no cover - fallback for minimal local environments
@@ -82,7 +84,7 @@ def fetch_commit_changes(commit_input: CommitInput) -> dict:
     for raw_file in raw_files[:MAX_COMMIT_FILES]:
         raw_patch = raw_file.get("patch") if isinstance(raw_file.get("patch"), str) else ""
         remaining = max(0, MAX_COMMIT_PATCH_CHARS - used_patch_chars)
-        patch = raw_patch[:remaining]
+        patch = redact_secrets(raw_patch[:remaining])
         used_patch_chars += len(patch)
         files.append(
             {

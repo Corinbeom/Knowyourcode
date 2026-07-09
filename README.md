@@ -39,6 +39,7 @@ API_DOCS_ENABLED=false
 API_ALLOWED_ORIGINS=https://knowyourcode.cloud,https://www.knowyourcode.cloud,https://knowyourcode.vercel.app
 API_AUTH_REQUIRED=true
 API_PROXY_SECRET=...
+API_TRUST_PROXY_HEADERS=true
 USER_ANALYSIS_DAILY_LIMIT=3
 USER_EVALUATION_DAILY_LIMIT=10
 IP_ANALYSIS_DAILY_LIMIT=20
@@ -133,11 +134,15 @@ python -m py_compile apps/api/app/main.py apps/api/app/api/commit.py apps/api/ap
 
 - Vercel Root Directory는 `apps/web`으로 설정합니다.
 - FastAPI를 별도 서버에 배포한 뒤 `BACKEND_API_URL`을 운영 API 주소로 설정합니다.
-- 운영 환경에서는 CORS origin, rate limit, API key 사용량 제한을 별도로 강화해야 합니다.
+- 운영 Web에는 `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `API_PROXY_SECRET`, `BACKEND_API_URL`, `GEMINI_API_KEY` 또는 선택한 LLM provider 키를 설정합니다.
+- 운영 API에는 `API_ENV=production`, `API_AUTH_REQUIRED=true`, `API_DOCS_ENABLED=false`, `API_PROXY_SECRET`, `REDIS_URL`, LLM provider 키를 설정합니다. production에서 필수 보안 설정이 빠지면 API가 시작되지 않습니다.
+- 운영 환경에서는 CORS origin, Redis 기반 rate limit, API key 사용량 제한을 별도로 강화해야 합니다.
 - 운영 FastAPI에서는 `API_ENV=production`, `API_DOCS_ENABLED=false`로 `/docs`, `/redoc`, `/openapi.json`을 비공개 처리합니다.
 - Nginx에서는 `.env`, `.git` 같은 민감 경로를 FastAPI까지 넘기지 않고 차단하는 것을 권장합니다.
 - 운영 API는 `API_AUTH_REQUIRED=true`와 `API_PROXY_SECRET`으로 Next.js 프록시 요청만 허용합니다.
+- FastAPI를 인터넷에 직접 노출하지 말고 Nginx/로드밸런서 뒤에 둡니다. 신뢰 프록시 없이 직접 노출해야 하는 환경에서는 `API_TRUST_PROXY_HEADERS=false`로 설정해 클라이언트가 보낸 `x-forwarded-for`를 rate limit 키로 신뢰하지 않게 합니다.
 - 사용자 quota는 GitHub 로그인 사용자 기준으로 Redis에 저장합니다. 기본값은 일 3회 분석, 일 10회 평가입니다.
+- public repo라도 코드에 실수로 포함된 secret-like 값은 분석 전에 `[REDACTED]`로 마스킹됩니다. 단, GitHub와 선택한 LLM provider에는 분석 대상 코드 조각이 전송될 수 있으므로 서비스 안내/개인정보 처리 정책에 명시해야 합니다.
 
 ### API CI/CD
 

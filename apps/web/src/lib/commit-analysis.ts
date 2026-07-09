@@ -1,4 +1,5 @@
 import type { CodeEvidence, CommitAnalysisResult, CommitFileChange, CommitInfo, FileSummary } from "./types";
+import { redactSecrets } from "./redaction";
 
 const MAX_CONTEXT_FILES = 12;
 const MAX_PATCH_EXCERPT = 2_400;
@@ -103,7 +104,7 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
 
 function splitPatchHunks(file: CommitFileChange): Array<{ index: number; header: string; excerpt: string }> {
   if (!file.patch) return [];
-  return file.patch
+  return redactSecrets(file.patch)
     .split(/(?=^@@ .+? @@)/m)
     .map((part) => part.trim())
     .filter(Boolean)
@@ -192,7 +193,7 @@ function toCommitFileSummary(file: CommitFileChange): FileSummary {
   return {
     path: file.path,
     reason: inferCommitFileReason(file),
-    excerpt: `${header}\n${file.patch ? file.patch.slice(0, MAX_PATCH_EXCERPT) : "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)"}`
+    excerpt: `${header}\n${file.patch ? redactSecrets(file.patch).slice(0, MAX_PATCH_EXCERPT) : "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)"}`
   };
 }
 

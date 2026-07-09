@@ -1,5 +1,6 @@
 import type { AnalysisFocus, AnalysisResult, CodeEvidence, FileSummary, QuestionLevel, QuestionType, RepoInfo, SourceFile } from "./types";
 import { extractCodeSignals } from "./code-signals";
+import { redactSecrets } from "./redaction";
 
 const PRIORITY_PATTERNS = [
   /README/i,
@@ -153,10 +154,11 @@ function buildRepoEvidenceSnippets(files: SourceFile[], focus: AnalysisFocus, qu
 }
 
 function toRepoFileEvidence(file: SourceFile, focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
+  const content = redactSecrets(file.content);
   const chunks: Array<{ title: string; excerpt: string }> = [
-    { title: "file overview", excerpt: file.content.slice(0, MAX_REPO_SNIPPET_LENGTH) },
-    ...extractSymbolChunks(file.content).slice(0, 3),
-    ...extractKeywordChunks(file.content, file.path).slice(0, 3)
+    { title: "file overview", excerpt: content.slice(0, MAX_REPO_SNIPPET_LENGTH) },
+    ...extractSymbolChunks(content).slice(0, 3),
+    ...extractKeywordChunks(content, file.path).slice(0, 3)
   ];
 
   return chunks.filter((chunk) => chunk.excerpt.trim()).map((chunk, index) => ({
@@ -445,7 +447,7 @@ function toFileSummary(file: SourceFile): FileSummary {
   return {
     path: file.path,
     reason: inferFileReason(file.path),
-    excerpt: buildSmartExcerpt(file.content)
+    excerpt: buildSmartExcerpt(redactSecrets(file.content))
   };
 }
 

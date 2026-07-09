@@ -1,4 +1,5 @@
 import AdmZip from "adm-zip";
+import { isSensitiveFilePath, redactSecrets } from "./redaction";
 import type { CommitFileChange, CommitInfo, RepoInfo, SourceFile } from "./types";
 
 const EXCLUDED_DIRS = new Set([
@@ -163,7 +164,7 @@ export async function fetchRepoFiles(repo: RepoInfo): Promise<SourceFile[]> {
     .filter(({ path }) => shouldIncludePath(path))
     .slice(0, MAX_TOTAL_FILES)
     .map(({ entry, path }) => {
-      const content = entry.getData().toString("utf8");
+      const content = redactSecrets(entry.getData().toString("utf8"));
       return {
         path,
         content: content.slice(0, MAX_FILE_SIZE),
@@ -205,7 +206,7 @@ export async function fetchCommitChanges(input: Pick<CommitInfo, "owner" | "repo
   const files: CommitFileChange[] = rawFiles.slice(0, MAX_COMMIT_FILES).map((file: Record<string, unknown>) => {
     const rawPatch = typeof file.patch === "string" ? file.patch : "";
     const remaining = Math.max(0, MAX_COMMIT_PATCH_CHARS - usedPatchChars);
-    const patch = rawPatch.slice(0, remaining);
+    const patch = redactSecrets(rawPatch.slice(0, remaining));
     usedPatchChars += patch.length;
 
     return {
@@ -247,6 +248,7 @@ function normalizeZipPath(entryName: string): string {
 
 function shouldIncludePath(path: string): boolean {
   if (!path) return false;
+  if (isSensitiveFilePath(path)) return false;
 
   const parts = path.split("/");
   if (parts.some((part) => EXCLUDED_DIRS.has(part))) return false;

@@ -12,7 +12,9 @@ from app.api.commit import router as commit_router
 from app.api.evaluation import router as evaluation_router
 from app.api.quota import router as quota_router
 from app.api.repo import router as repo_router
-from app.security import add_cors_middleware, docs_enabled
+from app.security import add_cors_middleware, docs_enabled, validate_runtime_config
+
+validate_runtime_config()
 
 app = FastAPI(
     title="KnowYourCode API",

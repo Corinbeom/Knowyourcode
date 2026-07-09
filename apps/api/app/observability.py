@@ -1,4 +1,5 @@
 import os
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -18,6 +19,22 @@ SENSITIVE_KEYWORDS = (
     "answers",
     "raw_response",
     "llm",
+)
+FILTERED = "[Filtered]"
+SENSITIVE_NAME_PATTERN = (
+    r"(?:[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|"
+    r"CLIENT[_-]?SECRET|AUTH[_-]?SECRET)[A-Z0-9_]*)"
+)
+SECRET_VALUE_PATTERN = r"(?:\"[^\"\n]*\"|'[^'\n]*'|`[^`\n]*`|[A-Za-z0-9_./:@+=-]{3,})"
+PRIVATE_KEY_PATTERN = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----")
+AUTHORIZATION_VALUE_PATTERN = re.compile(r"\b(Bearer|Basic)\s+[\"']?[^\"'\s]+[\"']?", re.I)
+SECRET_ASSIGNMENT_PATTERN = re.compile(
+    rf"^(\s*[+\- ]?\s*[\{{,]?\s*(?:export\s+)?(?:(?:const|let|var)\s+)?(?:[\w$.]+\.)?[\"']?{SENSITIVE_NAME_PATTERN}[\"']?(?:\s*:\s*[\w<>\[\]|., ?]+)?\s*[:=]\s*){SECRET_VALUE_PATTERN}",
+    re.I | re.M,
+)
+KNOWN_SECRET_VALUE_PATTERN = re.compile(
+    r"\b(?:ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|"
+    r"AIza[0-9A-Za-z_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b"
 )
 
 
@@ -104,14 +121,23 @@ def is_sentry_enabled() -> bool:
 def scrub_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            key: "[Filtered]" if is_sensitive_key(str(key)) else scrub_value(item)
+            key: FILTERED if is_sensitive_key(str(key)) else scrub_value(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
         return [scrub_value(item) for item in value]
+    if isinstance(value, str):
+        return scrub_string(value)
     return value
 
 
 def is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("-", "_")
     return any(keyword in normalized for keyword in SENSITIVE_KEYWORDS)
+
+
+def scrub_string(value: str) -> str:
+    redacted = PRIVATE_KEY_PATTERN.sub(FILTERED, value)
+    redacted = AUTHORIZATION_VALUE_PATTERN.sub(FILTERED, redacted)
+    redacted = SECRET_ASSIGNMENT_PATTERN.sub(r"\1" + FILTERED, redacted)
+    return KNOWN_SECRET_VALUE_PATTERN.sub(FILTERED, redacted)

@@ -272,8 +272,8 @@ Return this exact JSON shape:
   if (!parsed?.report || !Array.isArray(parsed.questions)) {
     console.warn("[KnowYourCode] Failed to parse commit analysis JSON", {
       length: raw.length,
-      preview: raw.slice(0, 800),
-      tail: raw.slice(-400)
+      provider: providerResult.usage.provider,
+      stage: "commit-analysis"
     });
 
     return {
@@ -380,8 +380,8 @@ ${buildQuestionJsonShape(context.questionTypes)}`;
   if (!Array.isArray(parsed?.questions)) {
     console.warn("[KnowYourCode] Failed to parse questions JSON", {
       length: raw.length,
-      preview: raw.slice(0, 800),
-      tail: raw.slice(-400)
+      provider: providerResult.usage.provider,
+      stage: "repo-questions"
     });
 
     return {
@@ -457,8 +457,8 @@ Return this exact JSON shape:
   if (!parsed?.report) {
     console.warn("[KnowYourCode] Failed to parse report JSON", {
       length: raw.length,
-      preview: raw.slice(0, 800),
-      tail: raw.slice(-400)
+      provider: providerResult.usage.provider,
+      stage: "repo-report"
     });
 
     return {
