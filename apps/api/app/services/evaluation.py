@@ -255,11 +255,11 @@ def build_fallback_quiz_evaluation(analysis: dict, answers: list[dict], commit_m
     }
 
 
-def normalize_evaluation(value: object, fallback: dict) -> dict:
+def normalize_evaluation(value: object, fallback: dict, score_divisor: int | None = None) -> dict:
     if not isinstance(value, dict):
         return fallback
     return {
-        "score": clamp_score(value.get("score")),
+        "score": normalize_score(value.get("score"), score_divisor),
         "scoreReason": str(value.get("scoreReason") or fallback["scoreReason"]),
         "understood": normalize_string_array(value.get("understood"), fallback["understood"]),
         "missing": normalize_string_array(value.get("missing"), fallback["missing"]),
@@ -285,13 +285,19 @@ def normalize_quiz_evaluation(value: object, fallback: dict, questions: list[dic
     if not isinstance(value, dict):
         return fallback
     parsed_evaluations = value.get("questionEvaluations") if isinstance(value.get("questionEvaluations"), list) else []
+    score_divisor = low_scale_divisor(
+        item.get("score")
+        for item in parsed_evaluations
+        if isinstance(item, dict)
+    )
     question_evaluations = []
     for question in questions:
         parsed = next((item for item in parsed_evaluations if isinstance(item, dict) and item.get("questionId") == question.get("id")), None)
         fallback_eval = next((item for item in fallback["questionEvaluations"] if item.get("questionId") == question.get("id")), fallback["questionEvaluations"][0])
-        question_evaluations.append({"questionId": question.get("id"), **normalize_evaluation(parsed, fallback_eval)})
+        question_evaluations.append({"questionId": question.get("id"), **normalize_evaluation(parsed, fallback_eval, score_divisor)})
+    average_score = round(sum(item["score"] for item in question_evaluations) / max(len(question_evaluations), 1))
     return {
-        "averageScore": clamp_score(value.get("averageScore")),
+        "averageScore": clamp_score(average_score),
         "summary": str(value.get("summary") or fallback["summary"]),
         "strengths": normalize_string_array(value.get("strengths"), fallback["strengths"]),
         "weaknesses": normalize_string_array(value.get("weaknesses"), fallback["weaknesses"]),
@@ -302,6 +308,28 @@ def normalize_quiz_evaluation(value: object, fallback: dict, questions: list[dic
 
 def clamp_score(value: object) -> int:
     return max(0, min(100, round(value if isinstance(value, (int, float)) else 50)))
+
+
+def normalize_score(value: object, divisor: int | None) -> int:
+    if not isinstance(value, (int, float)):
+        return 50
+    if divisor:
+        return clamp_score((value / divisor) * 100)
+    return clamp_score(value)
+
+
+def low_scale_divisor(values: object) -> int | None:
+    scores = [value for value in values if isinstance(value, (int, float))]
+    if not scores:
+        return None
+    maximum = max(scores)
+    if maximum <= 0:
+        return None
+    if maximum <= 2:
+        return 2
+    if maximum <= 5:
+        return 5
+    return None
 
 
 def normalize_string_array(value: object, fallback: list[str]) -> list[str]:

@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 import re
 
+from app.services.redaction import redact_secrets
+
 
 MAX_CONTEXT_FILES = 12
 MAX_PATCH_EXCERPT = 2400
@@ -92,7 +94,7 @@ def build_fallback_commit_analysis(context: dict) -> dict:
 
 
 def split_patch_hunks(file: dict) -> list[dict]:
-    patch = str(file.get("patch") or "")
+    patch = redact_secrets(str(file.get("patch") or ""))
     if not patch:
         return []
 
@@ -206,7 +208,7 @@ def to_commit_file_summary(file: dict) -> dict:
     ]
     if file.get("previousPath"):
         header_parts.append(f"previousPath: {file['previousPath']}")
-    patch = file.get("patch") or "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)"
+    patch = redact_secrets(file.get("patch") or "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)")
 
     return {
         "path": file.get("path") or "unknown",

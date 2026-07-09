@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
 import { TallyFeedbackButton } from "@/app/tally-feedback-button";
 import { loadCommitAnalysisResult, loadCommitQuizSession } from "@/lib/analysis-session";
+import { averageDisplayScore, displayScore, scoreLevel } from "@/lib/evaluation-display";
 import type { CommitAnalysisResult, QuizAnswer, QuizEvaluationResult, QuestionEvaluation } from "@/lib/types";
 
 export default function CommitResultPage() {
@@ -35,6 +36,8 @@ export default function CommitResultPage() {
   const answerMap = useMemo(() => new Map(answers.map((answer) => [answer.questionId, answer.answer])), [answers]);
 
   if (!analysis || !evaluation) return null;
+  const questionScores = evaluation.questionEvaluations.map((item) => item.score);
+  const averageLevel = scoreLevel(averageDisplayScore(questionScores, evaluation.averageScore));
 
   return (
     <main>
@@ -63,14 +66,14 @@ export default function CommitResultPage() {
               </div>
             </div>
             <div className="result-score">
-              <strong>{evaluation.averageScore}</strong>
-              <span>/ 100 평균 점수</span>
+              <strong>{averageLevel.label}</strong>
+              <span>종합 이해도</span>
             </div>
           </div>
           <div className="result-overview-grid" aria-label="커밋 결과 핵심 요약">
             <ResultOverviewCard eyebrow="가장 약한 문항" title={weakestQuestionTitle(analysis, evaluation)} description={weakestQuestionDescription(analysis, evaluation)} />
             <ResultOverviewCard eyebrow="다시 볼 변경 파일" title={shortListTitle(evaluation.reviewFiles, "추천 파일 없음")} description={evaluation.weaknesses[0] ?? "보완할 부분이 명확하게 감지되지 않았습니다."} />
-            <ResultOverviewCard eyebrow="다음 리뷰 포인트" title={scoreSummary(evaluation.averageScore)} description={evaluation.weaknesses[1] ?? evaluation.strengths[0] ?? "문항별 피드백을 기준으로 변경 의도와 영향 범위를 다시 연결해보세요."} />
+            <ResultOverviewCard eyebrow="다음 리뷰 포인트" title={averageLevel.description} description={evaluation.weaknesses[1] ?? evaluation.strengths[0] ?? "문항별 피드백을 기준으로 변경 의도와 영향 범위를 다시 연결해보세요."} />
           </div>
         </section>
 
@@ -139,6 +142,7 @@ function CommitQuizResultView({
   const selectedEvaluation = evaluation.questionEvaluations[selectedIndex] ?? evaluation.questionEvaluations[0];
   const selectedQuestion = analysis.questions.find((candidate) => candidate.id === selectedEvaluation?.questionId);
   const questionCount = evaluation.questionEvaluations.length;
+  const questionScores = evaluation.questionEvaluations.map((item) => item.score);
 
   function moveQuestion(direction: -1 | 1) {
     setSelectedIndex((current) => {
@@ -167,7 +171,7 @@ function CommitQuizResultView({
         {evaluation.questionEvaluations.map((item, index) => (
           <button key={item.questionId} type="button" className={index === selectedIndex ? "is-active" : ""} onClick={() => setSelectedIndex(index)}>
             <span>Q{index + 1}</span>
-            <strong>{item.score}</strong>
+            <strong>{scoreLevel(displayScore(item.score, questionScores)).shortLabel}</strong>
           </button>
         ))}
       </div>
@@ -181,6 +185,7 @@ function CommitQuizResultView({
           type={selectedQuestion.type}
           answer={answerMap.get(selectedEvaluation.questionId) ?? ""}
           evaluation={selectedEvaluation}
+          questionScores={questionScores}
         />
         <button className="question-arrow" type="button" onClick={() => moveQuestion(1)} aria-label="다음 문항">
           &gt;
@@ -195,14 +200,17 @@ function QuestionResultCard({
   question,
   type,
   answer,
-  evaluation
+  evaluation,
+  questionScores
 }: {
   index: number;
   question: string;
   type: string;
   answer: string;
   evaluation: QuestionEvaluation;
+  questionScores: number[];
 }) {
+  const level = scoreLevel(displayScore(evaluation.score, questionScores));
   return (
     <article className="question-result-card">
       <div className="question-result-card__header">
@@ -211,7 +219,7 @@ function QuestionResultCard({
           <h4>{question}</h4>
         </div>
         <div className="question-result-card__score">
-          <strong>{evaluation.score}점</strong>
+          <strong>{level.label}</strong>
         </div>
       </div>
       <div className="answer-review">
@@ -248,7 +256,8 @@ function ResultOverviewCard({ eyebrow, title, description }: { eyebrow: string; 
 
 function weakestQuestionTitle(analysis: CommitAnalysisResult, evaluation: QuizEvaluationResult): string {
   const weakest = findWeakestQuestion(analysis, evaluation);
-  return weakest ? `${weakest.type} · ${weakest.score}점` : "문항 없음";
+  const scores = evaluation.questionEvaluations.map((item) => item.score);
+  return weakest ? `${weakest.type} · ${scoreLevel(displayScore(weakest.score, scores)).label}` : "문항 없음";
 }
 
 function weakestQuestionDescription(analysis: CommitAnalysisResult, evaluation: QuizEvaluationResult): string {
@@ -265,12 +274,6 @@ function findWeakestQuestion(analysis: CommitAnalysisResult, evaluation: QuizEva
     question: question.question,
     score: weakest.score
   };
-}
-
-function scoreSummary(score: number): string {
-  if (score >= 80) return "이번 변경을 코드 근거와 함께 안정적으로 설명했습니다.";
-  if (score >= 60) return "변경 의도는 잡았지만 영향 범위와 테스트 근거를 더 보강해야 합니다.";
-  return "diff, 영향 범위, 테스트 리스크를 다시 확인하는 것이 좋습니다.";
 }
 
 function shortListTitle(items: string[], fallback: string): string {

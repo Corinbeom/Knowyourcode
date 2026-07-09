@@ -958,6 +958,34 @@ p {
   font-size: 12px;
 }
 
+.security-onboarding {
+  border: 1px solid rgba(43, 238, 52, 0.24);
+  border-radius: 10px;
+  padding: 16px;
+  background: rgba(43, 238, 52, 0.055);
+}
+
+.security-onboarding ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.data-disclosure {
+  margin: 0;
+  border: 1px solid rgba(43, 238, 52, 0.2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(43, 238, 52, 0.055);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .start-form {
   display: grid;
   gap: 14px;
@@ -1229,9 +1257,15 @@ p {
   box-shadow: 0 18px 60px -30px rgba(0, 0, 0, 0.92);
 }
 
-.setup-actions .quota-notice {
+.setup-actions__status {
   margin-right: auto;
   max-width: min(560px, 100%);
+  display: grid;
+  gap: 8px;
+}
+
+.setup-actions .quota-notice {
+  margin: 0;
 }
 
 .result-actions .secondary-button {
@@ -1368,8 +1402,8 @@ p {
 .quiz-counter strong,
 .result-score strong {
   color: var(--foreground);
-  font-size: 44px;
-  line-height: 1;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.15;
 }
 
 .quiz-counter span,
@@ -1769,7 +1803,8 @@ p {
 
 .quiz-card .evaluation-loading,
 .quiz-card .error,
-.quiz-card .usage-note {
+.quiz-card .usage-note,
+.quiz-card .quiz-disclosure {
   grid-column: 1 / -1;
 }
 
@@ -2725,7 +2760,7 @@ textarea:focus,
 }
 
 .question-score-nav button {
-  min-width: 82px;
+  min-width: 88px;
   min-height: 48px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2746,7 +2781,7 @@ textarea:focus,
 
 .question-score-nav button strong {
   color: var(--foreground);
-  font-size: 18px;
+  font-size: 14px;
 }
 
 .question-score-nav button.is-active {
@@ -2808,7 +2843,7 @@ textarea:focus,
 }
 
 .question-result-card__score {
-  min-width: 68px;
+  min-width: 104px;
   border: 1px solid rgba(251, 191, 36, 0.28);
   border-radius: 8px;
   padding: 12px 10px;
@@ -2819,8 +2854,8 @@ textarea:focus,
 
 .question-result-card__score strong {
   color: var(--warning);
-  font-size: 22px;
-  line-height: 1;
+  font-size: 17px;
+  line-height: 1.2;
   text-align: center;
   white-space: nowrap;
 }

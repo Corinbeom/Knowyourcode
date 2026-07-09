@@ -211,6 +211,9 @@ export default function CommitQuizPage() {
                 </div>
               ) : null}
               {quizState === "error" ? <p className="error">{error}</p> : null}
+              <p className="data-disclosure quiz-disclosure">
+                결과 보기 시 내 답변과 관련 diff 근거가 AI 평가에 사용됩니다. 답변은 현재 브라우저 세션에 임시 보관됩니다.
+              </p>
 
               <div className="quiz-actions">
                 <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={quizState === "evaluating"}>

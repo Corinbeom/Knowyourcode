@@ -1,5 +1,6 @@
 import os
 import time
+from hmac import compare_digest
 from collections import defaultdict, deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -47,9 +48,13 @@ def add_cors_middleware(app) -> None:
 
 
 def client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    if trust_proxy_headers():
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            return real_ip.strip()
     if request.client:
         return request.client.host
     return "unknown"
@@ -102,7 +107,7 @@ def authenticated_quota_limiter(kind: str) -> Callable:
         expected_secret = os.getenv("API_PROXY_SECRET")
         if not expected_secret:
             raise HTTPException(status_code=503, detail="API 인증 설정이 누락되었습니다.")
-        if proxy_secret != expected_secret:
+        if not is_valid_proxy_secret(proxy_secret, expected_secret):
             raise HTTPException(status_code=403, detail="허용되지 않은 API 요청입니다.")
         if not user_id or not user_login:
             raise HTTPException(status_code=401, detail="GitHub 로그인 정보가 필요합니다.")
@@ -152,7 +157,7 @@ def authenticated_user(
     expected_secret = os.getenv("API_PROXY_SECRET")
     if not expected_secret:
         raise HTTPException(status_code=503, detail="API 인증 설정이 누락되었습니다.")
-    if proxy_secret != expected_secret:
+    if not is_valid_proxy_secret(proxy_secret, expected_secret):
         raise HTTPException(status_code=403, detail="허용되지 않은 API 요청입니다.")
     if not user_id or not user_login:
         raise HTTPException(status_code=401, detail="GitHub 로그인 정보가 필요합니다.")
@@ -183,6 +188,34 @@ def quota_status(user_id: str, ip: str) -> dict:
 
 def auth_required() -> bool:
     return os.getenv("API_AUTH_REQUIRED", "false").lower() in {"1", "true", "yes", "on"}
+
+
+def trust_proxy_headers() -> bool:
+    return os.getenv("API_TRUST_PROXY_HEADERS", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def is_valid_proxy_secret(provided: str | None, expected: str) -> bool:
+    if not provided:
+        return False
+    return compare_digest(provided, expected)
+
+
+def validate_runtime_config() -> None:
+    if os.getenv("API_ENV", "development").lower() != "production":
+        return
+
+    errors = []
+    if not auth_required():
+        errors.append("API_AUTH_REQUIRED must be true in production")
+    if docs_enabled():
+        errors.append("API_DOCS_ENABLED must be false in production")
+    if not os.getenv("API_PROXY_SECRET"):
+        errors.append("API_PROXY_SECRET is required in production")
+    if not os.getenv("REDIS_URL"):
+        errors.append("REDIS_URL is required in production")
+
+    if errors:
+        raise RuntimeError("Invalid production API configuration: " + "; ".join(errors))
 
 
 def quota_window() -> tuple[str, str, int]:

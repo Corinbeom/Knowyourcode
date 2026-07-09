@@ -5,12 +5,16 @@ import { fetchCommitChanges, parseGitHubCommitUrl } from "@/lib/github";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
+import { backendApiUrl, webRuntimeConfigErrorResponse } from "@/lib/web-runtime-config";
 
 export const runtime = "nodejs";
 const ANALYZE_LIMIT_PER_HOUR = Number(process.env.ANALYZE_LIMIT_PER_HOUR ?? 5);
 
 export async function POST(request: Request) {
   try {
+    const configError = webRuntimeConfigErrorResponse();
+    if (configError) return configError;
+
     const body = (await request.json()) as { url?: string };
     if (!body.url) {
       return NextResponse.json({ error: "GitHub commit URL을 입력해주세요." }, { status: 400 });
@@ -60,7 +64,7 @@ export async function POST(request: Request) {
 }
 
 async function proxyAnalyzeCommit(url: string, backendAuth: BackendAuth): Promise<NextResponse | null> {
-  const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+  const backendUrl = backendApiUrl();
   if (!backendUrl) return null;
 
   const response = await fetch(`${backendUrl}/analyze-commit`, {

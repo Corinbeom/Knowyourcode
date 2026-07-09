@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 import json
 import re
 
+from app.services.redaction import redact_secrets
+
 QUESTION_TYPES = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"]
 MAX_CONTEXT_FILES = 15
 MAX_EXCERPT_LENGTH = 1600
@@ -162,7 +164,7 @@ def build_repo_evidence_snippets(files: list[dict], focus: str, question_targets
 
 def to_repo_file_evidence(file: dict, focus: str, question_targets: list[str]) -> list[dict]:
     path = str(file.get("path") or "unknown")
-    content = str(file.get("content") or "")
+    content = redact_secrets(str(file.get("content") or ""))
     if not content:
         return [make_repo_evidence(file, 0, "file unavailable", "", focus, question_targets)]
 
@@ -380,7 +382,7 @@ def expand_targets(question_targets: list[str]) -> set[str]:
 
 
 def to_file_summary(file: dict) -> dict:
-    return {"path": file["path"], "reason": infer_file_reason(file["path"]), "excerpt": smart_excerpt(file.get("content", ""))}
+    return {"path": file["path"], "reason": infer_file_reason(file["path"]), "excerpt": smart_excerpt(redact_secrets(file.get("content", "")))}
 
 
 def smart_excerpt(content: str) -> str:

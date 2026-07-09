@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from app.services.llm import SSL_CONTEXT
+from app.services.redaction import is_sensitive_file_path, redact_secrets
 
 EXCLUDED_DIRS = {"node_modules", "dist", "build", ".next", "coverage", "vendor", "target", ".git", ".turbo"}
 EXCLUDED_FILES = {"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb"}
@@ -70,7 +71,7 @@ def fetch_repo_files(repo: dict) -> list[dict]:
             if not should_include_path(path):
                 continue
             with zip_file.open(info) as file:
-                content = file.read(MAX_FILE_SIZE + 1).decode("utf-8", errors="ignore")[:MAX_FILE_SIZE]
+                content = redact_secrets(file.read(MAX_FILE_SIZE + 1).decode("utf-8", errors="ignore"))[:MAX_FILE_SIZE]
             files.append({"path": path, "content": content, "size": info.file_size})
             if len(files) >= MAX_TOTAL_FILES:
                 break
@@ -85,6 +86,8 @@ def normalize_zip_path(path: str) -> str:
 def should_include_path(path: str) -> bool:
     if not path:
         return False
+    if is_sensitive_file_path(path):
+        return False
 
     parts = path.split("/")
     if any(part in EXCLUDED_DIRS for part in parts):
@@ -94,7 +97,7 @@ def should_include_path(path: str) -> bool:
     if file_name in EXCLUDED_FILES or file_name.endswith(".min.js") or file_name.endswith(".map"):
         return False
 
-    _, extension = os.path.splitext(file_name)
+    extension = ".env.example" if file_name == ".env.example" else os.path.splitext(file_name)[1]
     return extension in TEXT_EXTENSIONS or file_name in SPECIAL_FILES
 
 

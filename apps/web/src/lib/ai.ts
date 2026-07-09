@@ -272,8 +272,8 @@ Return this exact JSON shape:
   if (!parsed?.report || !Array.isArray(parsed.questions)) {
     console.warn("[KnowYourCode] Failed to parse commit analysis JSON", {
       length: raw.length,
-      preview: raw.slice(0, 800),
-      tail: raw.slice(-400)
+      provider: providerResult.usage.provider,
+      stage: "commit-analysis"
     });
 
     return {
@@ -380,8 +380,8 @@ ${buildQuestionJsonShape(context.questionTypes)}`;
   if (!Array.isArray(parsed?.questions)) {
     console.warn("[KnowYourCode] Failed to parse questions JSON", {
       length: raw.length,
-      preview: raw.slice(0, 800),
-      tail: raw.slice(-400)
+      provider: providerResult.usage.provider,
+      stage: "repo-questions"
     });
 
     return {
@@ -457,8 +457,8 @@ Return this exact JSON shape:
   if (!parsed?.report) {
     console.warn("[KnowYourCode] Failed to parse report JSON", {
       length: raw.length,
-      preview: raw.slice(0, 800),
-      tail: raw.slice(-400)
+      provider: providerResult.usage.provider,
+      stage: "repo-report"
     });
 
     return {
@@ -742,13 +742,14 @@ async function evaluateQuizWithPrompt(
   const parsed = parseJsonObject(raw) as Partial<QuizEvaluationResult> | null;
   if (!parsed) return fallback;
 
+  const scoreDivisor = lowScaleDivisor(parsed.questionEvaluations?.map((item) => item.score) ?? []);
   const normalizedQuestionEvaluations = questions.map((question) => {
     const parsedEvaluation = parsed.questionEvaluations?.find((item) => item.questionId === question.id);
     const fallbackEvaluation = fallback.questionEvaluations.find((item) => item.questionId === question.id) ?? fallback.questionEvaluations[0];
 
     return {
       questionId: question.id,
-      score: clampScore(parsedEvaluation?.score),
+      score: normalizeEvaluationScore(parsedEvaluation?.score, scoreDivisor),
       scoreReason: parsedEvaluation?.scoreReason || fallbackEvaluation.scoreReason,
       understood: normalizeStringArray(parsedEvaluation?.understood, fallbackEvaluation.understood),
       missing: normalizeStringArray(parsedEvaluation?.missing, fallbackEvaluation.missing),
@@ -762,11 +763,7 @@ async function evaluateQuizWithPrompt(
   });
 
   return {
-    averageScore: clampScore(
-      typeof parsed.averageScore === "number"
-        ? parsed.averageScore
-        : normalizedQuestionEvaluations.reduce((sum, item) => sum + item.score, 0) / normalizedQuestionEvaluations.length
-    ),
+    averageScore: clampScore(normalizedQuestionEvaluations.reduce((sum, item) => sum + item.score, 0) / normalizedQuestionEvaluations.length),
     summary: parsed.summary || fallback.summary,
     strengths: normalizeStringArray(parsed.strengths, fallback.strengths),
     weaknesses: normalizeStringArray(parsed.weaknesses, fallback.weaknesses),
@@ -1460,6 +1457,22 @@ function buildFallbackCommitQuizEvaluation(analysis: CommitAnalysisResult, answe
 function clampScore(score: unknown): number {
   if (typeof score !== "number" || Number.isNaN(score)) return 50;
   return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function normalizeEvaluationScore(score: unknown, divisor: number | null): number {
+  if (typeof score !== "number" || Number.isNaN(score)) return 50;
+  if (divisor) return clampScore((score / divisor) * 100);
+  return clampScore(score);
+}
+
+function lowScaleDivisor(scores: unknown[]): number | null {
+  const numericScores = scores.filter((score): score is number => typeof score === "number" && Number.isFinite(score));
+  if (!numericScores.length) return null;
+  const max = Math.max(...numericScores);
+  if (max <= 0) return null;
+  if (max <= 2) return 2;
+  if (max <= 5) return 5;
+  return null;
 }
 
 function normalizeStringArray(input: unknown, fallback: string[]): string[] {

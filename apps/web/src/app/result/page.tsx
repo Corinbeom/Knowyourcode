@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
 import { loadAnalysisResult, loadQuizSession } from "@/lib/analysis-session";
+import { averageDisplayScore, displayScore, scoreLevel } from "@/lib/evaluation-display";
 import { TallyFeedbackButton } from "@/app/tally-feedback-button";
 import type { AnalysisFocus, AnalysisResult, QuestionEvaluation, QuestionLevel, QuestionType, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
 
@@ -63,6 +64,9 @@ export default function ResultPage() {
 
 function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; evaluation: QuizEvaluationResult }) {
   const weakest = findWeakestQuestion(analysis, evaluation);
+  const questionScores = evaluation.questionEvaluations.map((item) => item.score);
+  const averageLevel = scoreLevel(averageDisplayScore(questionScores, evaluation.averageScore));
+  const weakestLevel = weakest ? scoreLevel(displayScore(weakest.score, questionScores)) : null;
 
   return (
     <section className="result-summary-block">
@@ -79,14 +83,14 @@ function ResultSummary({ analysis, evaluation }: { analysis: AnalysisResult; eva
           </div>
         </div>
         <div className="result-score">
-          <strong>{evaluation.averageScore}</strong>
-          <span>/ 100 평균 점수</span>
+          <strong>{averageLevel.label}</strong>
+          <span>종합 이해도</span>
         </div>
       </div>
       <div className="result-overview-grid" aria-label="결과 핵심 요약">
-        <ResultOverviewCard eyebrow="가장 약한 문항" title={weakest ? `${weakest.type} · ${weakest.score}점` : "문항 없음"} description={weakest?.question ?? "문항별 평가가 아직 없습니다."} />
+        <ResultOverviewCard eyebrow="가장 약한 문항" title={weakest && weakestLevel ? `${weakest.type} · ${weakestLevel.label}` : "문항 없음"} description={weakest?.question ?? "문항별 평가가 아직 없습니다."} />
         <ResultOverviewCard eyebrow="다시 볼 파일" title={shortListTitle(evaluation.reviewFiles, "추천 파일 없음")} description={evaluation.weaknesses[0] ?? "보완할 부분이 명확하게 감지되지 않았습니다."} />
-        <ResultOverviewCard eyebrow="다음 학습 포인트" title={scoreSummary(evaluation.averageScore)} description={evaluation.weaknesses[1] ?? evaluation.strengths[0] ?? "질문별 피드백을 기준으로 코드 근거를 다시 연결해보세요."} />
+        <ResultOverviewCard eyebrow="다음 학습 포인트" title={averageLevel.description} description={evaluation.weaknesses[1] ?? evaluation.strengths[0] ?? "질문별 피드백을 기준으로 코드 근거를 다시 연결해보세요."} />
       </div>
     </section>
   );
@@ -172,6 +176,7 @@ function QuizResultView({
   const selectedEvaluation = evaluation.questionEvaluations[selectedIndex] ?? evaluation.questionEvaluations[0];
   const selectedQuestion = analysis.questions.find((candidate) => candidate.id === selectedEvaluation?.questionId);
   const questionCount = evaluation.questionEvaluations.length;
+  const questionScores = evaluation.questionEvaluations.map((item) => item.score);
 
   function moveQuestion(direction: -1 | 1) {
     setSelectedIndex((current) => {
@@ -205,7 +210,7 @@ function QuizResultView({
             onClick={() => setSelectedIndex(index)}
           >
             <span>Q{index + 1}</span>
-            <strong>{item.score}</strong>
+            <strong>{scoreLevel(displayScore(item.score, questionScores)).shortLabel}</strong>
           </button>
         ))}
       </div>
@@ -219,6 +224,7 @@ function QuizResultView({
           type={selectedQuestion.type}
           answer={answerMap.get(selectedEvaluation.questionId) ?? ""}
           evaluation={selectedEvaluation}
+          questionScores={questionScores}
         />
         <button className="question-arrow" type="button" onClick={() => moveQuestion(1)} aria-label="다음 문항">
           &gt;
@@ -233,14 +239,17 @@ function QuestionResultCard({
   question,
   type,
   answer,
-  evaluation
+  evaluation,
+  questionScores
 }: {
   index: number;
   question: string;
   type: QuestionType;
   answer: string;
   evaluation: QuestionEvaluation;
+  questionScores: number[];
 }) {
+  const level = scoreLevel(displayScore(evaluation.score, questionScores));
   return (
     <article className="question-result-card">
       <div className="question-result-card__header">
@@ -249,7 +258,7 @@ function QuestionResultCard({
           <h4>{question}</h4>
         </div>
         <div className="question-result-card__score">
-          <strong>{evaluation.score}점</strong>
+          <strong>{level.label}</strong>
         </div>
       </div>
       <div className="answer-review">
@@ -298,12 +307,6 @@ function findWeakestQuestion(analysis: AnalysisResult, evaluation: QuizEvaluatio
     question: question.question,
     score: weakest.score
   };
-}
-
-function scoreSummary(score: number): string {
-  if (score >= 80) return "코드 흐름을 꽤 안정적으로 설명했습니다.";
-  if (score >= 60) return "핵심 흐름은 잡았지만 근거 연결을 더 보강해야 합니다.";
-  return "파일 역할과 코드 근거를 다시 확인하는 것이 좋습니다.";
 }
 
 function shortListTitle(items: string[], fallback: string): string {
