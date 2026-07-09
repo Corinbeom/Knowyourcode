@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { evaluateAnswer } from "@/lib/ai";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
+import { payloadTooLargeResponse, readEvaluationJson, validateEvaluationAnalysis } from "@/lib/evaluation-payload";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
+import { backendApiUrl, webRuntimeConfigErrorResponse } from "@/lib/web-runtime-config";
 import type { AnalysisResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -11,11 +13,14 @@ const MAX_ANSWER_LENGTH = Number(process.env.MAX_ANSWER_LENGTH ?? 4000);
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
+    const configError = webRuntimeConfigErrorResponse();
+    if (configError) return configError;
+
+    const body = await readEvaluationJson<{
       analysis?: AnalysisResult;
       questionId?: string;
       answer?: string;
-    };
+    }>(request);
 
     if (!body.analysis || !body.questionId || !body.answer?.trim()) {
       return NextResponse.json(
@@ -23,6 +28,8 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    const analysisError = validateEvaluationAnalysis(body.analysis);
+    if (analysisError) return analysisError;
 
     if (body.answer.length > MAX_ANSWER_LENGTH) {
       return NextResponse.json(
@@ -55,6 +62,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ evaluation, limits: { evaluate: rateLimit.meta } });
   } catch (error) {
+    const payloadError = payloadTooLargeResponse(error);
+    if (payloadError) return payloadError;
     captureRouteError(error, {
       mode: "project",
       route: "/api/evaluate",
@@ -66,7 +75,7 @@ export async function POST(request: Request) {
 }
 
 async function proxyEvaluation(path: string, body: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
-  const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+  const backendUrl = backendApiUrl();
   if (!backendUrl) return null;
 
   const response = await fetch(`${backendUrl}/${path}`, {

@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { authErrorResponse, requireBackendAuth } from "@/lib/backend-auth";
+import { backendApiUrl, webRuntimeConfigErrorResponse } from "@/lib/web-runtime-config";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
+    const configError = webRuntimeConfigErrorResponse();
+    if (configError) return configError;
+
     const backendAuth = await requireBackendAuth();
-    const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+    const backendUrl = backendApiUrl();
     if (!backendUrl) {
       return NextResponse.json({ error: "API 서버 연결 설정이 없습니다." }, { status: 503 });
     }

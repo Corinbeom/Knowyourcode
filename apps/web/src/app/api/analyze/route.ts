@@ -6,6 +6,7 @@ import { consumeRateLimit } from "@/lib/rate-limit";
 import { buildFallbackAnalysis, buildStaticContext } from "@/lib/repo-analysis";
 import { sanitizeRepoAnalysis } from "@/lib/repo-question-sanitizer";
 import { captureBackendResponseError, captureRouteError } from "@/lib/sentry";
+import { backendApiUrl, webRuntimeConfigErrorResponse } from "@/lib/web-runtime-config";
 import type { AnalysisFocus, QuestionLevel, QuestionType } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -14,6 +15,9 @@ const QUESTION_TYPES: QuestionType[] = ["구조 이해", "요청 흐름", "데�
 
 export async function POST(request: Request) {
   try {
+    const configError = webRuntimeConfigErrorResponse();
+    if (configError) return configError;
+
     const body = (await request.json()) as {
       url?: string;
       focus?: AnalysisFocus;
@@ -129,7 +133,7 @@ async function proxyAnalyzeRepo(
   },
   backendAuth: BackendAuth
 ): Promise<NextResponse | null> {
-  const backendUrl = process.env.BACKEND_API_URL?.replace(/\/$/, "");
+  const backendUrl = backendApiUrl();
   if (!backendUrl) return null;
 
   const response = await fetch(`${backendUrl}/analyze`, {

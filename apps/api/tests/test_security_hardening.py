@@ -3,7 +3,9 @@ import unittest
 from unittest.mock import patch
 
 from app.observability import scrub_sentry_event
+from app.api.evaluation import validate_analysis_payload
 from app.security import validate_runtime_config
+from app.services.evaluation import normalize_quiz_evaluation
 from app.services.commit_analysis import build_commit_static_context
 from app.services.github_repo import should_include_path
 from app.services.redaction import is_sensitive_file_path, redact_secrets
@@ -139,6 +141,72 @@ class RuntimeConfigTest(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=True):
             validate_runtime_config()
+
+
+class EvaluationPayloadLimitTest(unittest.TestCase):
+    def test_rejects_oversized_evaluation_analysis_payload(self):
+        analysis = {
+            "questions": [{"id": "q1", "evidenceSnippets": []}],
+            "contextFiles": [{"path": "src/app.ts", "reason": "test", "excerpt": "x" * 20}],
+        }
+
+        with patch.dict(os.environ, {"MAX_EVALUATION_EXCERPT_CHARS": "10"}):
+            with self.assertRaisesRegex(Exception, "평가 코드 근거 내용이 너무 깁니다"):
+                validate_analysis_payload(analysis)
+
+    def test_accepts_normal_evaluation_analysis_payload(self):
+        analysis = {
+            "questions": [{"id": "q1", "evidenceSnippets": [{"excerpt": "function ok() {}", "path": "src/app.ts"}]}],
+            "contextFiles": [{"path": "src/app.ts", "reason": "test", "excerpt": "function ok() {}"}],
+        }
+
+        validate_analysis_payload(analysis)
+
+
+class EvaluationScoreNormalizationTest(unittest.TestCase):
+    def test_normalizes_low_scale_question_scores_and_recomputes_average(self):
+        questions = [{"id": f"q{index}"} for index in range(1, 6)]
+        fallback = {
+            "summary": "fallback",
+            "strengths": ["fallback"],
+            "weaknesses": ["fallback"],
+            "reviewFiles": [],
+            "questionEvaluations": [
+                {
+                    "questionId": question["id"],
+                    "score": 42,
+                    "scoreReason": "fallback",
+                    "understood": ["fallback"],
+                    "missing": ["fallback"],
+                    "incorrect": [],
+                    "relatedFiles": [],
+                    "reviewCode": [],
+                    "betterAnswer": "fallback",
+                    "interviewAnswerDirection": "fallback",
+                    "followUpQuestion": "fallback",
+                }
+                for question in questions
+            ],
+        }
+        parsed = {
+            "averageScore": 100,
+            "summary": "parsed",
+            "strengths": ["parsed"],
+            "weaknesses": ["parsed"],
+            "reviewFiles": [],
+            "questionEvaluations": [
+                {"questionId": "q1", "score": 2, "scoreReason": "ok"},
+                {"questionId": "q2", "score": 1, "scoreReason": "partial"},
+                {"questionId": "q3", "score": 0, "scoreReason": "miss"},
+                {"questionId": "q4", "score": 0, "scoreReason": "miss"},
+                {"questionId": "q5", "score": 0, "scoreReason": "miss"},
+            ],
+        }
+
+        normalized = normalize_quiz_evaluation(parsed, fallback, questions)
+
+        self.assertEqual([item["score"] for item in normalized["questionEvaluations"]], [100, 50, 0, 0, 0])
+        self.assertEqual(normalized["averageScore"], 30)
 
 
 if __name__ == "__main__":
