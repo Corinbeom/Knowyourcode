@@ -38,6 +38,7 @@ def generate_commit_analysis(context: dict, fallback: dict) -> dict:
 
     questions = normalize_commit_questions(parsed.get("questions"), fallback["questions"], fallback.get("evidenceSnippets", []))
     questions = refine_commit_question_evidence(questions, fallback["questions"], fallback.get("evidenceSnippets", []))
+    questions = enforce_commit_question_quality(questions, fallback["questions"], fallback.get("evidenceSnippets", []))
 
     return {
         **fallback,
@@ -75,6 +76,7 @@ def generate_repo_analysis(context: dict, fallback: dict) -> dict:
 
     questions = normalize_repo_questions(parsed.get("questions"), fallback["questions"], context["questionTypes"], fallback.get("evidenceSnippets", []))
     questions = refine_repo_question_evidence(questions, fallback["questions"], fallback.get("evidenceSnippets", []))
+    questions = enforce_repo_question_quality(questions, fallback["questions"], fallback.get("evidenceSnippets", []))
 
     return {
         **fallback,
@@ -487,6 +489,89 @@ def refine_repo_question_evidence(questions: list[dict], fallback: list[dict], e
     return refined
 
 
+def enforce_commit_question_quality(questions: list[dict], fallback: list[dict], evidence_snippets: list[dict]) -> list[dict]:
+    if not evidence_snippets:
+        return questions
+
+    return enforce_question_quality(
+        questions,
+        fallback,
+        evidence_snippets,
+        lambda question, used_paths, index: build_commit_question_from_evidence(question, fallback[index] if index < len(fallback) else question, evidence_snippets, used_paths, index),
+    )
+
+
+def enforce_repo_question_quality(questions: list[dict], fallback: list[dict], evidence_snippets: list[dict]) -> list[dict]:
+    if not evidence_snippets:
+        return questions
+
+    return enforce_question_quality(
+        questions,
+        fallback,
+        evidence_snippets,
+        lambda question, used_paths, index: build_repo_question_from_evidence(question, fallback[index] if index < len(fallback) else question, evidence_snippets, index, used_paths),
+    )
+
+
+def enforce_question_quality(questions: list[dict], fallback: list[dict], evidence_snippets: list[dict], repair_builder) -> list[dict]:
+    repaired = []
+    seen_signatures = set()
+    used_paths = set()
+
+    for index, question in enumerate(questions):
+        candidate = normalize_question_related_files(question)
+        signature = question_signature(candidate)
+        if signature in seen_signatures or has_explicit_path_evidence_mismatch(candidate):
+            candidate = repair_builder(candidate, used_paths, index)
+            candidate = normalize_question_related_files(candidate)
+            signature = question_signature(candidate)
+
+        if signature in seen_signatures:
+            fallback_question = fallback[index] if index < len(fallback) else candidate
+            candidate = repair_builder(fallback_question, used_paths, index)
+            candidate = normalize_question_related_files(candidate)
+            signature = question_signature(candidate)
+
+        repaired.append(candidate)
+        seen_signatures.add(signature)
+        used_paths.update(question_paths(candidate))
+
+    return repaired
+
+
+def normalize_question_related_files(question: dict) -> dict:
+    snippets = question.get("evidenceSnippets", []) if isinstance(question.get("evidenceSnippets"), list) else []
+    paths = evidence_paths(snippets)
+    if not paths:
+        return question
+    return {**question, "relatedFiles": paths[:3]}
+
+
+def has_explicit_path_evidence_mismatch(question: dict) -> bool:
+    explicit_paths = extract_question_paths(str(question.get("question") or ""))
+    if not explicit_paths:
+        return False
+    snippets = question.get("evidenceSnippets", []) if isinstance(question.get("evidenceSnippets"), list) else []
+    if not snippets:
+        return True
+    return not all(any(path_matches(snippet.get("path", ""), path) for snippet in snippets) for path in explicit_paths)
+
+
+def question_signature(question: dict) -> str:
+    text = re.sub(r"\s+", " ", str(question.get("question") or "")).strip().lower()
+    text = re.sub(r"q\d+", "q", text)
+    return f"{question.get('type', '')}:{text}"
+
+
+def question_paths(question: dict) -> list[str]:
+    snippets = question.get("evidenceSnippets", []) if isinstance(question.get("evidenceSnippets"), list) else []
+    paths = evidence_paths(snippets)
+    if paths:
+        return paths
+    related_files = question.get("relatedFiles", [])
+    return [str(path) for path in related_files if path] if isinstance(related_files, list) else []
+
+
 def is_repo_question_evidence_aligned(question: dict, all_evidence: list[dict]) -> bool:
     if is_too_generic_repo_question(question):
         return False
@@ -626,10 +711,45 @@ def select_layered_repo_evidence(evidence_snippets: list[dict], layers: list[str
     return selected
 
 
-def build_repo_question_from_evidence(question: dict, fallback_question: dict, evidence_snippets: list[dict], index: int) -> dict:
+def build_commit_question_from_evidence(question: dict, fallback_question: dict, evidence_snippets: list[dict], used_paths: set[str], index: int) -> dict:
+    question_type = question.get("type") or fallback_question.get("type") or "변경 의도"
+    available = [snippet for snippet in evidence_snippets if str(snippet.get("path") or "") not in used_paths]
+    candidates = available or evidence_snippets
+    start = index % len(candidates) if candidates else 0
+    selected = compact_evidence([candidates[start]] if candidates else [])
+    if not selected:
+        selected = compact_evidence(fallback_question.get("evidenceSnippets", []) or evidence_snippets[:1])
+    related_files = evidence_paths(selected)
+    primary_path = related_files[0] if related_files else "변경 파일"
+
+    return {
+        "id": question.get("id") or fallback_question.get("id") or f"q{index + 1}",
+        "type": question_type,
+        "question": build_commit_question_text(question_type, primary_path),
+        "relatedFiles": related_files,
+        "evidenceSnippets": selected,
+    }
+
+
+def build_commit_question_text(question_type: str, primary_path: str) -> str:
+    if question_type == "변경 영향도":
+        return f"{primary_path} 변경이 연결된 기능이나 모듈에 어떤 영향을 줄 수 있나요?"
+    if question_type == "테스트/리스크":
+        return f"{primary_path} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?"
+    if question_type == "리뷰형":
+        return f"코드 리뷰에서 {primary_path} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?"
+    return f"{primary_path} 변경은 어떤 문제를 해결하려는 의도인가요?"
+
+
+def build_repo_question_from_evidence(question: dict, fallback_question: dict, evidence_snippets: list[dict], index: int, used_paths: set[str] | None = None) -> dict:
     question_type = question.get("type") or fallback_question.get("type") or "구조 이해"
-    selected = select_repo_evidence_for_question({"type": question_type, "question": "", "relatedFiles": []}, evidence_snippets)
+    available_evidence = [snippet for snippet in evidence_snippets if str(snippet.get("path") or "") not in (used_paths or set())]
+    selected = select_repo_evidence_for_question({"type": question_type, "question": "", "relatedFiles": []}, available_evidence or evidence_snippets)
+    if used_paths:
+        selected = selected[:1]
     selected = selected or select_repo_fallback_evidence(question_type, evidence_snippets)
+    if used_paths:
+        selected = selected[:1]
     selected = compact_evidence(selected)
     related_files = evidence_paths(selected)
     primary_path = related_files[0] if related_files else "핵심 파일"

@@ -1225,7 +1225,7 @@ function normalizeQuestions(
   const allowedTypes = new Set(questionTypes);
   const fallbackFiles = fallback.flatMap((question) => question.relatedFiles);
 
-  return input.slice(0, 5).map((question, index) => {
+  const questions = input.slice(0, 5).map((question, index) => {
     const relatedFiles = normalizeRelatedFiles(question.relatedFiles, fallbackFiles);
     return {
       id: question.id || `q${index + 1}`,
@@ -1235,6 +1235,8 @@ function normalizeQuestions(
       evidenceSnippets: normalizeUnderstandingQuestionEvidence(question, evidenceSnippets, fallback[index], relatedFiles)
     };
   });
+
+  return enforceUnderstandingQuestionQuality(questions, fallback, evidenceSnippets);
 }
 
 function normalizeUnderstandingQuestionEvidence(
@@ -1271,7 +1273,7 @@ function normalizeCommitQuestions(
   const fallbackFiles = fallback.flatMap((question) => question.relatedFiles);
   const allowedTypes = new Set(COMMIT_QUESTION_TYPES);
 
-  return input.slice(0, 4).map((question, index) => {
+  const questions = input.slice(0, 4).map((question, index) => {
     const relatedFiles = normalizeRelatedFiles(question.relatedFiles, fallbackFiles);
     return {
       id: question.id || `q${index + 1}`,
@@ -1281,6 +1283,8 @@ function normalizeCommitQuestions(
       evidenceSnippets: normalizeQuestionEvidence(question, evidenceSnippets, fallback[index], relatedFiles)
     };
   });
+
+  return enforceCommitQuestionQuality(questions, fallback, evidenceSnippets);
 }
 
 function normalizeQuestionEvidence(
@@ -1300,6 +1304,140 @@ function normalizeQuestionEvidence(
   );
   const fallbackEvidence = fallbackQuestion?.evidenceSnippets ?? [];
   return compactEvidence(selected.length ? selected : fallbackByPath.length ? fallbackByPath : fallbackEvidence.length ? fallbackEvidence : evidenceSnippets.slice(0, 1));
+}
+
+function enforceUnderstandingQuestionQuality(
+  questions: UnderstandingQuestion[],
+  fallback: UnderstandingQuestion[],
+  evidenceSnippets: CodeEvidence[]
+): UnderstandingQuestion[] {
+  return enforceQuestionQuality(questions, fallback, evidenceSnippets, buildUnderstandingQuestionFromEvidence);
+}
+
+function enforceCommitQuestionQuality(
+  questions: CommitQuestion[],
+  fallback: CommitQuestion[],
+  evidenceSnippets: CodeEvidence[]
+): CommitQuestion[] {
+  return enforceQuestionQuality(questions, fallback, evidenceSnippets, buildCommitQuestionFromEvidence);
+}
+
+function enforceQuestionQuality<T extends UnderstandingQuestion | CommitQuestion>(
+  questions: T[],
+  fallback: T[],
+  evidenceSnippets: CodeEvidence[],
+  buildFromEvidence: (question: T, fallbackQuestion: T, evidenceSnippets: CodeEvidence[], usedPaths: Set<string>, index: number) => T
+): T[] {
+  if (!evidenceSnippets.length) return questions;
+  const seen = new Set<string>();
+  const usedPaths = new Set<string>();
+
+  return questions.map((question, index) => {
+    let candidate = normalizeQuestionRelatedFiles(question);
+    let signature = questionSignature(candidate);
+    if (seen.has(signature) || hasExplicitPathEvidenceMismatch(candidate)) {
+      candidate = normalizeQuestionRelatedFiles(buildFromEvidence(candidate, fallback[index] ?? candidate, evidenceSnippets, usedPaths, index));
+      signature = questionSignature(candidate);
+    }
+    if (seen.has(signature)) {
+      candidate = normalizeQuestionRelatedFiles(buildFromEvidence(fallback[index] ?? candidate, fallback[index] ?? candidate, evidenceSnippets, usedPaths, index));
+      signature = questionSignature(candidate);
+    }
+    seen.add(signature);
+    questionPaths(candidate).forEach((path) => usedPaths.add(path));
+    return candidate;
+  });
+}
+
+function buildUnderstandingQuestionFromEvidence(
+  question: UnderstandingQuestion,
+  fallbackQuestion: UnderstandingQuestion,
+  evidenceSnippets: CodeEvidence[],
+  usedPaths: Set<string>,
+  index: number
+): UnderstandingQuestion {
+  const selected = pickUnusedEvidence(evidenceSnippets, usedPaths, index);
+  const primaryPath = selected[0]?.path ?? fallbackQuestion.relatedFiles[0] ?? "핵심 파일";
+  return {
+    ...question,
+    question: buildUnderstandingQuestionText(question.type || fallbackQuestion.type, primaryPath),
+    relatedFiles: selected.map((snippet) => snippet.path),
+    evidenceSnippets: selected
+  };
+}
+
+function buildCommitQuestionFromEvidence(
+  question: CommitQuestion,
+  fallbackQuestion: CommitQuestion,
+  evidenceSnippets: CodeEvidence[],
+  usedPaths: Set<string>,
+  index: number
+): CommitQuestion {
+  const selected = pickUnusedEvidence(evidenceSnippets, usedPaths, index);
+  const primaryPath = selected[0]?.path ?? fallbackQuestion.relatedFiles[0] ?? "변경 파일";
+  return {
+    ...question,
+    question: buildCommitQuestionText(question.type || fallbackQuestion.type, primaryPath),
+    relatedFiles: selected.map((snippet) => snippet.path),
+    evidenceSnippets: selected
+  };
+}
+
+function pickUnusedEvidence(evidenceSnippets: CodeEvidence[], usedPaths: Set<string>, index: number): CodeEvidence[] {
+  const candidates = evidenceSnippets.filter((snippet) => !usedPaths.has(snippet.path));
+  const pool = candidates.length ? candidates : evidenceSnippets;
+  if (!pool.length) return [];
+  return [pool[index % pool.length]];
+}
+
+function buildUnderstandingQuestionText(type: QuestionType, primaryPath: string): string {
+  if (type === "요청 흐름") return `${primaryPath}의 요청 처리 흐름이 어떤 파일들과 연결되는지 설명해주세요.`;
+  if (type === "데이터 흐름") return `${primaryPath}에서 데이터 입력, 검증, 조회 또는 저장 흐름이 어떻게 드러나는지 설명해주세요.`;
+  if (type === "변경 영향도") return `${primaryPath}의 동작을 수정할 때 어떤 영향 범위를 함께 확인해야 하나요?`;
+  if (type === "면접형") return `면접이나 코드리뷰에서 ${primaryPath}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`;
+  return `${primaryPath}의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.`;
+}
+
+function buildCommitQuestionText(type: CommitQuestionType, primaryPath: string): string {
+  if (type === "변경 영향도") return `${primaryPath} 변경이 연결된 기능이나 모듈에 어떤 영향을 줄 수 있나요?`;
+  if (type === "테스트/리스크") return `${primaryPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`;
+  if (type === "리뷰형") return `코드 리뷰에서 ${primaryPath} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?`;
+  return `${primaryPath} 변경은 어떤 문제를 해결하려는 의도인가요?`;
+}
+
+function normalizeQuestionRelatedFiles<T extends UnderstandingQuestion | CommitQuestion>(question: T): T {
+  const paths = question.evidenceSnippets?.map((snippet) => snippet.path).filter(Boolean) ?? [];
+  if (!paths.length) return question;
+  return { ...question, relatedFiles: [...new Set(paths)].slice(0, 3) };
+}
+
+function hasExplicitPathEvidenceMismatch(question: UnderstandingQuestion | CommitQuestion): boolean {
+  const explicitPaths = extractQuestionPaths(question.question);
+  if (!explicitPaths.length) return false;
+  const snippets = question.evidenceSnippets ?? [];
+  if (!snippets.length) return true;
+  return !explicitPaths.every((path) => snippets.some((snippet) => pathMatches(snippet.path, path)));
+}
+
+function questionSignature(question: UnderstandingQuestion | CommitQuestion): string {
+  return `${question.type}:${question.question.replace(/\s+/g, " ").trim().toLowerCase()}`;
+}
+
+function questionPaths(question: UnderstandingQuestion | CommitQuestion): string[] {
+  const evidencePaths = question.evidenceSnippets?.map((snippet) => snippet.path).filter(Boolean) ?? [];
+  return [...new Set(evidencePaths.length ? evidencePaths : question.relatedFiles)];
+}
+
+function extractQuestionPaths(text: string): string[] {
+  const patterns = [
+    /(?:apps?|src|lib|pages|components|api|app|server|client|tests?)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+/g,
+    /[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|py|java|kt|go|rs|json|ya?ml)/g
+  ];
+  return [...new Set(patterns.flatMap((pattern) => text.match(pattern) ?? []))];
+}
+
+function pathMatches(actualPath: string, expectedPath: string): boolean {
+  return actualPath === expectedPath || actualPath.endsWith(expectedPath) || expectedPath.endsWith(actualPath);
 }
 
 function compactEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
