@@ -134,6 +134,7 @@ export default function StartPage() {
               meta="질문 4개 · 변경 의도/리스크"
               onSelect={selectMode}
             />
+            <SecurityOnboarding />
           </section>
 
           <form className="start-form" onSubmit={handleSubmit}>
@@ -155,6 +156,9 @@ export default function StartPage() {
             </div>
             {mode === "commit" ? <CommitUrlHelp /> : <ProjectModeHelp />}
             <QuotaNotice quota={quota} error={quotaError} />
+            <p className="data-disclosure">
+              공개 코드 일부와 답변은 AI 분석에 사용될 수 있으며, 민감 파일과 secret-like 값은 제외하거나 마스킹합니다.
+            </p>
             <button className="primary-button" type="submit" disabled={!url.trim() || isQuotaExhausted}>
               {isQuotaExhausted ? "오늘 분석 가능 횟수를 모두 사용했습니다" : status === "authenticated" ? guide.button : "GitHub 로그인 후 시작 →"}
             </button>
@@ -162,6 +166,21 @@ export default function StartPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function SecurityOnboarding() {
+  return (
+    <section className="security-onboarding" aria-label="분석 전 보안 안내">
+      <p className="section-label">분석 전 알아두기</p>
+      <ul>
+        <li>공개 GitHub repository와 commit만 분석합니다.</li>
+        <li>코드 조각과 답변은 AI 분석/평가를 위해 LLM provider로 전송될 수 있습니다.</li>
+        <li>민감 파일과 token-like 값은 분석 전에 제외하거나 [REDACTED]로 마스킹합니다.</li>
+        <li>분석 결과와 답변은 서버 DB에 저장하지 않고 현재 브라우저 세션에 임시 보관합니다.</li>
+        <li>GitHub 로그인은 사용자 식별과 사용량 제한 용도이며 private repository를 읽지 않습니다.</li>
+      </ul>
+    </section>
   );
 }
 

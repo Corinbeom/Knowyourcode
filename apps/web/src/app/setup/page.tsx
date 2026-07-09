@@ -183,7 +183,12 @@ export default function SetupPage() {
         <SetupSelectionSummary setup={setup} />
 
         <div className="setup-actions">
-          <QuotaNotice quota={quota} error={quotaError} />
+          <div className="setup-actions__status">
+            <QuotaNotice quota={quota} error={quotaError} />
+            <p className="data-disclosure">
+              분석 시작 시 공개 repo 코드 조각이 AI provider로 전송될 수 있습니다. 민감 파일과 secret-like 값은 먼저 마스킹됩니다.
+            </p>
+          </div>
           <button className="secondary-button" type="button" onClick={() => router.push("/")} disabled={isSubmitting}>
             저장소 다시 입력
           </button>
