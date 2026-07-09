@@ -1,7 +1,7 @@
 import unittest
 
 from app.services.repo_analysis import build_fallback_repo_analysis, build_repo_static_context, file_layer, infer_file_reason
-from app.services.llm import refine_repo_question_evidence
+from app.services.llm import enforce_repo_question_quality, refine_repo_question_evidence
 
 
 def sample_repo():
@@ -128,6 +128,34 @@ class RepoEvidenceTest(unittest.TestCase):
 
         self.assertEqual(refined[0]["relatedFiles"], ["apps/api/app/services/github_repo.py"])
         self.assertEqual(refined[0]["evidenceSnippets"][0]["id"], service_evidence["id"])
+
+    def test_repo_quality_guard_rewrites_duplicate_questions(self):
+        evidence = [
+            {
+                "id": f"service-{index}.py:0",
+                "path": f"apps/api/app/services/service_{index}.py",
+                "title": f"apps/api/app/services/service_{index}.py run",
+                "reason": "비즈니스 로직과 기능 흐름을 확인할 수 있는 파일",
+                "excerpt": "def run(payload):\n    return validate(payload)",
+                "kind": "service",
+            }
+            for index in range(1, 6)
+        ]
+        questions = [
+            {
+                "id": f"q{index}",
+                "type": "면접형",
+                "question": "면접이나 코드리뷰에서 apps/api/app/services/service_1.py를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?",
+                "relatedFiles": ["apps/api/app/services/service_1.py"],
+                "evidenceSnippets": [evidence[0]],
+            }
+            for index in range(1, 6)
+        ]
+
+        guarded = enforce_repo_question_quality(questions, questions, evidence)
+
+        self.assertEqual(len({question["question"] for question in guarded}), 5)
+        self.assertEqual(len({question["relatedFiles"][0] for question in guarded}), 5)
 
     def test_repo_refine_requires_request_flow_to_include_entry_and_second_file_when_available(self):
         entry_evidence = {
