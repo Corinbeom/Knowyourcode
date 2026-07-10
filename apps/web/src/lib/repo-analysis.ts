@@ -14,6 +14,8 @@ const MAX_REPO_SNIPPET_LENGTH = 1_200;
 const SECTION_EXCERPT_LENGTH = 360;
 const SYMBOL_CONTEXT_LENGTH = 420;
 const MAX_SYMBOL_SNIPPETS = 2;
+const OMITTED_BEFORE_MARKER = "... 이전 코드 생략 ...";
+const OMITTED_AFTER_MARKER = "... 이후 코드 생략 ...";
 
 export function buildStaticContext(
   repo: RepoInfo,
@@ -60,15 +62,17 @@ export function buildFallbackAnalysis(
   const signals = extractCodeSignals(contextFiles, focus);
   const requestEvidence = pickEvidenceByCapability(evidenceSnippets, supportsRequestOrServiceEvidence, ["entry", "service"], 3);
   const dataEvidence = pickEvidenceByCapability(evidenceSnippets, supportsDataFlowEvidence, ["data", "service", "entry"], 3);
-  const structureFile = pickSummaryFile(contextFiles, ["entry", "ui", "service", "config"])?.path ?? signals[0]?.path ?? keyFiles[0]?.path ?? "핵심 파일";
   const requestFiles = evidencePaths(requestEvidence);
   if (!requestFiles.length) requestFiles.push(...pickSummaryFiles(contextFiles, ["entry", "service"], 2).map((file) => file.path));
+  const structureFile = pickStructureSummaryFile(contextFiles, requestFiles)?.path ?? signals[0]?.path ?? keyFiles[0]?.path ?? "핵심 파일";
   const dataFiles = evidencePaths(dataEvidence);
   if (!dataFiles.length) dataFiles.push(...pickSummaryFiles(contextFiles, ["data", "service"], 2).map((file) => file.path));
   const impactFiles = pickSummaryFiles(contextFiles, ["service", "ui", "entry", "config"], 2).map((file) => file.path);
   const interviewFiles = pickSummaryFiles(contextFiles, ["entry", "service", "data", "config"], 2).map((file) => file.path);
   const secondaryFile = requestFiles[0] ?? keyFiles[1]?.path ?? structureFile;
   const dataFile = dataFiles[0] ?? structureFile;
+  const structureEvidence = compactEvidenceList([pickEvidenceForPath(evidenceSnippets, structureFile)]);
+  const structureSubject = structureEvidence[0] ? fallbackQuestionSubject(structureEvidence[0]) : `${structureFile}의 코드 조각`;
 
   return {
     repo,
@@ -104,9 +108,9 @@ export function buildFallbackAnalysis(
       {
         id: "q1",
         type: questionTypes[0] ?? "구조 이해",
-        question: `${structureFile}의 역할을 기준으로 이 프로젝트의 실행 진입점과 주요 폴더 구조를 설명해주세요.`,
+        question: `${structureSubject}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?`,
         relatedFiles: [structureFile],
-        evidenceSnippets: compactEvidenceList([pickEvidenceForPath(evidenceSnippets, structureFile)])
+        evidenceSnippets: structureEvidence
       },
       {
         id: "q2",
@@ -118,7 +122,7 @@ export function buildFallbackAnalysis(
       {
         id: "q3",
         type: questionTypes[2 % questionTypes.length] ?? "데이터 흐름",
-        question: `${dataFile}에서 데이터 입력, 검증, 조회 또는 저장 흐름이 어떻게 드러나는지 설명해주세요.`,
+        question: `${dataFile}에서 데이터 입력, 검증, 조회 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.`,
         relatedFiles: dataFiles.length ? dataFiles : [structureFile],
         evidenceSnippets: compactEvidenceList(dataEvidence.length ? dataEvidence : (dataFiles.length ? dataFiles : [structureFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
       },
@@ -140,6 +144,17 @@ export function buildFallbackAnalysis(
   };
 }
 
+function fallbackQuestionSubject(snippet: CodeEvidence): string {
+  const scope = snippet.title.includes("·")
+    ? snippet.title.split("·").at(-1)?.trim() ?? ""
+    : snippet.path && snippet.title.startsWith(snippet.path)
+      ? snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim()
+      : "";
+  if (!scope || scope === "file overview") return `${snippet.path}의 코드 조각`;
+  if (/^(GET|POST|PUT|PATCH|DELETE)$/.test(scope)) return `${snippet.path}의 ${scope} handler`;
+  return `${snippet.path}의 ${scope} 코드`;
+}
+
 function buildRepoEvidenceSnippets(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
   const guaranteed: CodeEvidence[] = [];
   const extras: CodeEvidence[] = [];
@@ -155,17 +170,19 @@ function buildRepoEvidenceSnippets(files: SourceFile[], focus: AnalysisFocus, qu
 
 function toRepoFileEvidence(file: SourceFile, focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
   const content = redactSecrets(file.content);
-  const chunks: Array<{ title: string; excerpt: string }> = [
-    { title: "file overview", excerpt: content.slice(0, MAX_REPO_SNIPPET_LENGTH) },
+  const codeChunks = rankRepoChunks([
     ...extractSymbolChunks(content).slice(0, 3),
     ...extractKeywordChunks(content, file.path).slice(0, 3)
-  ];
+  ], file.path);
+  const chunks: Array<{ title: string; excerpt: string }> = codeChunks.some((chunk) => chunk.excerpt.trim())
+    ? codeChunks
+    : [{ title: "file overview", excerpt: sliceAround(content, 0, MAX_REPO_SNIPPET_LENGTH) }];
 
   return chunks.filter((chunk) => chunk.excerpt.trim()).map((chunk, index) => ({
     id: `${sanitizeEvidenceId(file.path)}:${index}`,
     path: file.path,
-    title: `${file.path} ${chunk.title}`,
-    reason: inferFileReason(file.path),
+    title: `${file.path} · ${chunk.title}`,
+    reason: inferEvidenceReason(file.path, chunk.title, chunk.excerpt),
     excerpt: chunk.excerpt.slice(0, MAX_REPO_SNIPPET_LENGTH),
     kind: fileLayer(file.path)
   }));
@@ -179,12 +196,20 @@ function extractSymbolChunks(content: string): Array<{ title: string; excerpt: s
     /^\s*def\s+([A-Za-z0-9_]+)\s*\(/gm,
     /^\s*class\s+([A-Za-z0-9_]+)/gm
   ];
-  const chunks: Array<{ title: string; excerpt: string }> = [];
+  const matches: Array<{ index: number; title: string }> = [];
   for (const pattern of patterns) {
     for (const match of content.matchAll(pattern)) {
-      chunks.push({ title: match[1] ?? "symbol", excerpt: sliceAround(content, match.index ?? 0, MAX_REPO_SNIPPET_LENGTH) });
-      if (chunks.length >= 6) return chunks;
+      matches.push({ index: match.index ?? 0, title: match[1] ?? "symbol" });
     }
+  }
+  const chunks: Array<{ title: string; excerpt: string }> = [];
+  const seen = new Set<string>();
+  for (const match of matches.sort((a, b) => a.index - b.index)) {
+    const key = `${match.index}:${match.title}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    chunks.push({ title: match.title, excerpt: sliceAround(content, match.index, MAX_REPO_SNIPPET_LENGTH) });
+    if (chunks.length >= 6) break;
   }
   return chunks;
 }
@@ -213,15 +238,49 @@ function extractKeywordChunks(content: string, path: string): Array<{ title: str
   return chunks;
 }
 
+function rankRepoChunks(chunks: Array<{ title: string; excerpt: string }>, path: string): Array<{ title: string; excerpt: string }> {
+  return chunks
+    .map((chunk, index) => ({ chunk, index }))
+    .sort((a, b) => repoChunkPriority(a.chunk, path) - repoChunkPriority(b.chunk, path) || a.index - b.index)
+    .map((item) => item.chunk);
+}
+
+function repoChunkPriority(chunk: { title: string; excerpt: string }, path: string): number {
+  if (/^(GET|POST|PUT|PATCH|DELETE)$/.test(chunk.title)) return 0;
+  if (isEntrypointFile(path) && /\bexport\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b/.test(chunk.excerpt)) return 1;
+  if (["runtime", "dynamic", "revalidate", "preferredRegion", "maxDuration", "fetchCache"].includes(chunk.title)) return 8;
+  if (["request flow", "data flow", "error handling"].includes(chunk.title)) return 3;
+  if (chunk.title === "configuration") return 7;
+  if (chunk.title === "file overview") return 9;
+  return 2;
+}
+
 function sanitizeEvidenceId(path: string): string {
   return path.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-|-$/g, "") || "unknown";
 }
 
 function scoreRepoEvidence(snippet: CodeEvidence): number {
   let score = snippet.excerpt.length / 100;
-  if (!snippet.title.endsWith("file overview")) score += 18;
+  if (snippet.title.endsWith("file overview")) score -= 24;
+  else score += 18;
   if (/function|class|return|async|await|fetch|router|route|controller|service|repository/i.test(snippet.excerpt)) score += 16;
   return score;
+}
+
+function inferEvidenceReason(path: string, title: string, excerpt: string): string {
+  if (title === "file overview") return inferFileReason(path);
+
+  const text = `${path}\n${title}\n${excerpt}`;
+  if (/\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|route|router|controller|handler|api\//i.test(text)) {
+    return "요청 처리와 API/서비스 연결 흐름을 확인할 수 있는 코드 조각";
+  }
+  if (/\b(schema|model|repository|entity|database|query\w*|save\w*|create\w*|update\w*|delete\w*|find\w*|fetch\w*|parse\w*|validate\w*)\b/i.test(text)) {
+    return "데이터 입력, 검증, 조회 또는 변환 흐름을 확인할 수 있는 코드 조각";
+  }
+  if (/\b(except|catch|raise|throw|HTTPError|URLError|ValueError|Exception)\b/i.test(text)) {
+    return "예외 처리와 실패 경계를 확인할 수 있는 코드 조각";
+  }
+  return "선택된 함수나 클래스의 책임을 확인할 수 있는 코드 조각";
 }
 
 function pickEvidenceForPath(snippets: CodeEvidence[], path: string): CodeEvidence | undefined {
@@ -229,7 +288,7 @@ function pickEvidenceForPath(snippets: CodeEvidence[], path: string): CodeEviden
 }
 
 function compactEvidenceList(snippets: Array<CodeEvidence | undefined>): CodeEvidence[] {
-  return [...new Map(snippets.filter((snippet): snippet is CodeEvidence => Boolean(snippet)).map((snippet) => [snippet.id, snippet])).values()].slice(0, 3);
+  return [...new Map(snippets.filter((snippet): snippet is CodeEvidence => Boolean(snippet)).map((snippet) => [evidenceIdentity(snippet), snippet])).values()].slice(0, 3);
 }
 
 function pickEvidenceByCapability(
@@ -256,14 +315,21 @@ function evidencePaths(snippets: CodeEvidence[]): string[] {
 }
 
 function supportsRequestOrServiceEvidence(snippet: CodeEvidence): boolean {
-  return supportsRequestFlowEvidence(snippet) || snippet.kind === "service";
+  return supportsRequestFlowEvidence(snippet) || isRequestHelperEvidence(snippet);
 }
 
 function supportsRequestFlowEvidence(snippet: CodeEvidence): boolean {
   const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
   if (snippet.kind === "config" && /package\.json|config|env|settings|docker/i.test(snippet.path)) return false;
   return /route|router|controller|handler|endpoint|api\//i.test(snippet.path)
-    || /\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b/i.test(text);
+    || /\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]/i.test(text);
+}
+
+function isRequestHelperEvidence(snippet: CodeEvidence): boolean {
+  if (snippet.kind !== "service") return false;
+  const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
+  if (/\bdocs?_enabled|openapi|redoc|swagger|cors|allowed_origins\b/i.test(text)) return false;
+  return /\b(parse\w*|validate\w*|fetch\w*|build\w*|analyze\w*|evaluate\w*|create\w*|update\w*|delete\w*|request\.json|urlparse|urlopen|axios)\b/i.test(text);
 }
 
 function supportsDataFlowEvidence(snippet: CodeEvidence): boolean {
@@ -277,7 +343,16 @@ function supportsDataFlowEvidence(snippet: CodeEvidence): boolean {
 }
 
 function dedupeEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
-  return [...new Map(snippets.map((snippet) => [snippet.id, snippet])).values()];
+  return [...new Map(snippets.map((snippet) => [evidenceIdentity(snippet), snippet])).values()];
+}
+
+function evidenceIdentity(snippet: CodeEvidence): string {
+  const scope = snippet.title.includes("·")
+    ? snippet.title.split("·").at(-1)?.trim() ?? ""
+    : snippet.path && snippet.title.startsWith(snippet.path)
+      ? snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim()
+      : "";
+  return `${snippet.path}:${scope || snippet.id}`;
 }
 
 function rankFiles(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[] = []): SourceFile[] {
@@ -418,6 +493,18 @@ function pickSummaryFile(files: FileSummary[], layers: Array<ReturnType<typeof f
   return pickSummaryFiles(files, layers, 1)[0] ?? files[0];
 }
 
+function pickStructureSummaryFile(files: FileSummary[], requestFiles: string[]): FileSummary | undefined {
+  for (const path of requestFiles) {
+    const matched = files.find((file) => file.path === path);
+    if (matched && !isContractLikePath(path)) return matched;
+  }
+  return pickSummaryFile(files, ["entry", "service", "ui", "config"]);
+}
+
+function isContractLikePath(path: string): boolean {
+  return /(^|\/)(schemas?|models?|entities?|dto|types?)(\/|$)|(?:schema|model|entity|dto|types?)\./i.test(path);
+}
+
 function pickSummaryFiles(files: FileSummary[], layers: Array<ReturnType<typeof fileLayer>>, limit: number): FileSummary[] {
   const selected: FileSummary[] = [];
   for (const layer of layers) {
@@ -474,10 +561,57 @@ function formatExcerptSection(label: string, text: string): string {
 }
 
 function sliceAround(content: string, index: number, length: number): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (normalized.length <= length) return normalized;
+
   const half = Math.floor(length / 2);
-  const start = Math.max(index - half, 0);
-  const end = Math.min(start + length, content.length);
-  return content.slice(start, end);
+  let start = Math.max(index - half, 0);
+  let end = Math.min(start + length, normalized.length);
+  if (end === normalized.length) start = Math.max(normalized.length - length, 0);
+
+  let markerOverhead = 0;
+  if (start > 0) markerOverhead += OMITTED_BEFORE_MARKER.length + 2;
+  if (end < normalized.length) markerOverhead += OMITTED_AFTER_MARKER.length + 2;
+
+  const bodyLength = Math.max(120, length - markerOverhead);
+  start = Math.max(index - Math.floor(bodyLength / 2), 0);
+  end = Math.min(start + bodyLength, normalized.length);
+  if (end === normalized.length) start = Math.max(normalized.length - bodyLength, 0);
+  [start, end] = alignSliceToLines(normalized, start, end, index);
+
+  const parts: string[] = [];
+  if (start > 0) parts.push(OMITTED_BEFORE_MARKER);
+  parts.push(normalized.slice(start, end).replace(/^\n+|\n+$/g, ""));
+  if (end < normalized.length) parts.push(OMITTED_AFTER_MARKER);
+  return parts.join("\n\n");
+}
+
+function alignSliceToLines(content: string, start: number, end: number, index: number): [number, number] {
+  if (start > 0) {
+    const nextNewline = content.indexOf("\n", start);
+    if (nextNewline !== -1 && nextNewline < index) {
+      start = nextNewline + 1;
+    } else {
+      start = content.lastIndexOf("\n", index - 1) + 1;
+    }
+  }
+
+  if (end < content.length) {
+    const previousNewline = content.lastIndexOf("\n", end);
+    if (previousNewline > index) {
+      end = previousNewline;
+    } else {
+      const nextNewline = content.indexOf("\n", index);
+      end = nextNewline === -1 ? content.length : nextNewline;
+    }
+  }
+
+  if (start >= end) {
+    const lineStart = content.lastIndexOf("\n", index - 1) + 1;
+    const lineEnd = content.indexOf("\n", index);
+    return [lineStart, lineEnd === -1 ? content.length : lineEnd];
+  }
+  return [start, end];
 }
 
 function findSymbolSnippetPositions(content: string): number[] {

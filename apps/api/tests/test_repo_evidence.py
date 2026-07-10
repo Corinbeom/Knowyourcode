@@ -1,7 +1,7 @@
 import unittest
 
-from app.services.repo_analysis import build_fallback_repo_analysis, build_repo_static_context, file_layer, infer_file_reason
-from app.services.llm import enforce_repo_question_quality, refine_repo_question_evidence
+from app.services.repo_analysis import build_fallback_repo_analysis, build_repo_static_context, file_layer, infer_file_reason, slice_around
+from app.services.llm import compact_evidence, enforce_repo_question_quality, is_repo_question_evidence_aligned, refine_repo_question_evidence
 
 
 def sample_repo():
@@ -33,6 +33,124 @@ class RepoEvidenceTest(unittest.TestCase):
         self.assertTrue(context["evidenceSnippets"])
         self.assertTrue(any(snippet["path"] == "src/app/api/users/route.ts" for snippet in context["evidenceSnippets"]))
         self.assertTrue(any("GET" in snippet["title"] for snippet in context["evidenceSnippets"]))
+
+    def test_repo_symbol_evidence_precedes_file_overview(self):
+        context = build_repo_static_context(
+            sample_repo(),
+            [
+                {
+                    "path": "src/app/api/evaluate-quiz/route.ts",
+                    "content": (
+                        "import { NextResponse } from 'next/server';\n"
+                        "import { proxy } from '@/lib/proxy';\n\n"
+                        "export async function POST(request: Request) {\n"
+                        "  const payload = await request.json();\n"
+                        "  return proxy('/evaluate', payload);\n"
+                        "}\n"
+                    ),
+                    "size": 220,
+                }
+            ],
+            "balanced",
+            "standard",
+            ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"],
+            [],
+        )
+
+        first = next(snippet for snippet in context["evidenceSnippets"] if snippet["path"] == "src/app/api/evaluate-quiz/route.ts")
+
+        self.assertIn("· POST", first["title"])
+        self.assertNotIn("file overview", first["title"])
+        self.assertIn("코드 조각", first["reason"])
+
+    def test_repo_route_handler_precedes_runtime_config_evidence(self):
+        context = build_repo_static_context(
+            sample_repo(),
+            [
+                {
+                    "path": "apps/web/src/app/api/analyze-commit/route.ts",
+                    "content": (
+                        "export const runtime = \"nodejs\";\n\n"
+                        "import { NextResponse } from 'next/server';\n"
+                        "import { buildCommitStaticContext } from '@/lib/commit-analysis';\n\n"
+                        "export async function POST(request: Request) {\n"
+                        "  const payload = await request.json();\n"
+                        "  const context = buildCommitStaticContext(payload.files);\n"
+                        "  return NextResponse.json({ context });\n"
+                        "}\n"
+                    ),
+                    "size": 320,
+                }
+            ],
+            "balanced",
+            "standard",
+            ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"],
+            [],
+        )
+        first = next(snippet for snippet in context["evidenceSnippets"] if snippet["path"] == "apps/web/src/app/api/analyze-commit/route.ts")
+        analysis = build_fallback_repo_analysis(context)
+
+        self.assertIn("· POST", first["title"])
+        self.assertNotIn("· runtime", first["title"])
+        self.assertIn("POST handler", analysis["questions"][0]["question"])
+
+    def test_repo_first_question_prefers_entry_over_schema_contract(self):
+        context = build_repo_static_context(
+            sample_repo(),
+            [
+                {
+                    "path": "apps/api/app/schemas/repo.py",
+                    "content": "class AnalyzeRepoRequest(BaseModel):\n    url: str\n    focus: str | None = None\n",
+                    "size": 120,
+                },
+                {
+                    "path": "apps/api/app/api/repo.py",
+                    "content": (
+                        "from app.schemas.repo import AnalyzeRepoRequest\n\n"
+                        "def analyze_repo(payload: AnalyzeRepoRequest):\n"
+                        "    context = build_repo_static_context(payload)\n"
+                        "    return generate_repo_analysis(context)\n"
+                    ),
+                    "size": 220,
+                },
+            ],
+            "balanced",
+            "standard",
+            ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"],
+            [],
+        )
+
+        analysis = build_fallback_repo_analysis(context)
+
+        self.assertEqual(analysis["questions"][0]["relatedFiles"], ["apps/api/app/api/repo.py"])
+        self.assertIn("analyze_repo", analysis["questions"][0]["question"])
+        self.assertNotIn("AnalyzeRepoRequest 모델", analysis["questions"][0]["question"])
+
+    def test_slice_around_marks_omitted_code(self):
+        content = "\n".join(f"const value{index} = {index};" for index in range(100))
+        excerpt = slice_around(content, content.index("value50"), 240)
+
+        self.assertIn("이전 코드 생략", excerpt)
+        self.assertIn("이후 코드 생략", excerpt)
+        self.assertIn("value50", excerpt)
+        code_lines = [line for line in excerpt.splitlines() if line and "코드 생략" not in line]
+        self.assertTrue(all(line.startswith("const value") for line in code_lines))
+
+    def test_repo_question_evidence_dedupes_same_path_and_scope(self):
+        first = {
+            "id": "src-app-api-users-route.ts:0",
+            "path": "src/app/api/users/route.ts",
+            "title": "src/app/api/users/route.ts · POST",
+            "reason": "요청 처리와 API/서비스 연결 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "export async function POST(request: Request) { return createUser(); }",
+            "kind": "entry",
+        }
+        duplicate = {**first, "id": "src-app-api-users-route.ts:1"}
+        other = {**first, "id": "src-app-api-users-route.ts:2", "title": "src/app/api/users/route.ts · GET"}
+
+        compacted = compact_evidence([first, duplicate, other])
+
+        self.assertEqual([snippet["title"] for snippet in compacted], ["src/app/api/users/route.ts · POST", "src/app/api/users/route.ts · GET"])
 
     def test_fallback_repo_questions_all_have_evidence(self):
         context = build_repo_static_context(
@@ -128,6 +246,124 @@ class RepoEvidenceTest(unittest.TestCase):
 
         self.assertEqual(refined[0]["relatedFiles"], ["apps/api/app/services/github_repo.py"])
         self.assertEqual(refined[0]["evidenceSnippets"][0]["id"], service_evidence["id"])
+
+    def test_repo_refine_narrows_broad_structure_question_for_single_route_evidence(self):
+        route_evidence = {
+            "id": "route.ts:0",
+            "path": "src/app/api/evaluate-quiz/route.ts",
+            "title": "src/app/api/evaluate-quiz/route.ts · POST",
+            "reason": "요청 처리와 API/서비스 연결 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "export async function POST(request: Request) { return fetch(backendUrl); }",
+            "kind": "entry",
+        }
+        question = {
+            "id": "q1",
+            "type": "구조 이해",
+            "question": "src/app/api/evaluate-quiz/route.ts의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.",
+            "relatedFiles": ["src/app/api/evaluate-quiz/route.ts"],
+            "evidenceSnippets": [route_evidence],
+        }
+
+        refined = refine_repo_question_evidence([question], [question], [route_evidence])
+
+        self.assertNotIn("프로젝트의 주요 구조", refined[0]["question"])
+        self.assertIn("POST handler", refined[0]["question"])
+        self.assertEqual(refined[0]["relatedFiles"], ["src/app/api/evaluate-quiz/route.ts"])
+
+    def test_repo_refine_prefers_question_symbol_evidence_label(self):
+        class_evidence = {
+            "id": "github_commit.py:0",
+            "path": "apps/api/app/services/github_commit.py",
+            "title": "apps/api/app/services/github_commit.py · CommitInput",
+            "reason": "데이터 입력, 검증, 조회 또는 변환 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "class CommitInput:\n    owner: str\n\ndef parse_github_commit_url(raw_url: str) -> CommitInput:",
+            "kind": "service",
+        }
+        parser_evidence = {
+            "id": "github_commit.py:1",
+            "path": "apps/api/app/services/github_commit.py",
+            "title": "apps/api/app/services/github_commit.py · parse_github_commit_url",
+            "reason": "데이터 입력, 검증, 조회 또는 변환 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "def parse_github_commit_url(raw_url: str) -> CommitInput:\n    parsed = urlparse(raw_url.strip())",
+            "kind": "service",
+        }
+        question = {
+            "id": "q5",
+            "type": "면접형",
+            "question": "면접이나 코드리뷰에서 apps/api/app/services/github_commit.py의 parse_github_commit_url 설계 의도를 어떻게 설명하겠습니까?",
+            "relatedFiles": ["apps/api/app/services/github_commit.py"],
+            "evidenceSnippets": [class_evidence],
+        }
+
+        refined = refine_repo_question_evidence([question], [question], [class_evidence, parser_evidence])
+
+        self.assertEqual(refined[0]["evidenceSnippets"][0]["id"], "github_commit.py:1")
+        self.assertIn("parse_github_commit_url", refined[0]["evidenceSnippets"][0]["title"])
+
+    def test_repo_refine_rejects_docs_enabled_as_request_flow_core(self):
+        docs_evidence = {
+            "id": "security.py:0",
+            "path": "apps/api/app/security.py",
+            "title": "apps/api/app/security.py · docs_enabled",
+            "reason": "선택된 함수나 클래스의 책임을 확인할 수 있는 코드 조각",
+            "excerpt": "from fastapi import Header, HTTPException, Request\n\ndef docs_enabled() -> bool:\n    return os.getenv('API_ENV') != 'production'",
+            "kind": "service",
+        }
+        entry_evidence = {
+            "id": "commit.py:0",
+            "path": "apps/api/app/api/commit.py",
+            "title": "apps/api/app/api/commit.py · analyze_commit",
+            "reason": "요청 처리와 API/서비스 연결 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "def analyze_commit(payload):\n    commit_input = parse_github_commit_url(payload.url)",
+            "kind": "entry",
+        }
+        parser_evidence = {
+            "id": "github_commit.py:1",
+            "path": "apps/api/app/services/github_commit.py",
+            "title": "apps/api/app/services/github_commit.py · parse_github_commit_url",
+            "reason": "데이터 입력, 검증, 조회 또는 변환 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "def parse_github_commit_url(raw_url: str) -> CommitInput:\n    parsed = urlparse(raw_url.strip())",
+            "kind": "service",
+        }
+        question = {
+            "id": "q2",
+            "type": "요청 흐름",
+            "question": "apps/api/app/security.py의 docs_enabled 요청 처리 흐름이 어떻게 이어지는지 설명해주세요.",
+            "relatedFiles": ["apps/api/app/security.py"],
+            "evidenceSnippets": [docs_evidence],
+        }
+
+        refined = refine_repo_question_evidence([question], [question], [docs_evidence, entry_evidence, parser_evidence])
+
+        self.assertEqual(refined[0]["relatedFiles"][:2], ["apps/api/app/api/commit.py", "apps/api/app/services/github_commit.py"])
+        self.assertNotIn("docs_enabled", refined[0]["question"])
+
+    def test_repo_structure_question_allows_multiple_layers(self):
+        entry_evidence = {
+            "id": "route.ts:0",
+            "path": "src/app/api/users/route.ts",
+            "title": "src/app/api/users/route.ts · POST",
+            "reason": "요청 처리와 API/서비스 연결 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "export async function POST(request: Request) { return fetchUsers(); }",
+            "kind": "entry",
+        }
+        service_evidence = {
+            "id": "user-service.ts:0",
+            "path": "src/lib/user-service.ts",
+            "title": "src/lib/user-service.ts · fetchUsers",
+            "reason": "데이터 입력, 검증, 조회 또는 변환 흐름을 확인할 수 있는 코드 조각",
+            "excerpt": "export function fetchUsers() { return repository.findMany(); }",
+            "kind": "service",
+        }
+        question = {
+            "id": "q1",
+            "type": "구조 이해",
+            "question": "src/app/api/users/route.ts와 src/lib/user-service.ts의 POST fetchUsers 연결을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.",
+            "relatedFiles": ["src/app/api/users/route.ts", "src/lib/user-service.ts"],
+            "evidenceSnippets": [entry_evidence, service_evidence],
+        }
+
+        self.assertTrue(is_repo_question_evidence_aligned(question, [entry_evidence, service_evidence]))
 
     def test_repo_quality_guard_rewrites_duplicate_questions(self):
         evidence = [
