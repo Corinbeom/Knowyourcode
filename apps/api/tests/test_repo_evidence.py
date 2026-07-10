@@ -1,7 +1,7 @@
 import unittest
 
-from app.services.repo_analysis import build_fallback_repo_analysis, build_repo_static_context, file_layer, infer_file_reason, slice_around
-from app.services.llm import compact_evidence, enforce_repo_question_quality, is_repo_question_evidence_aligned, refine_repo_question_evidence
+from app.services.repo_analysis import build_fallback_repo_analysis, build_repo_static_context, extract_keyword_chunks, file_layer, infer_file_reason, slice_around
+from app.services.llm import compact_evidence, enforce_repo_question_quality, evidence_snippets_connected, is_repo_question_evidence_aligned, question_capability_gap, refine_repo_question_evidence
 
 
 def sample_repo():
@@ -88,11 +88,12 @@ class RepoEvidenceTest(unittest.TestCase):
             [],
         )
         first = next(snippet for snippet in context["evidenceSnippets"] if snippet["path"] == "apps/web/src/app/api/analyze-commit/route.ts")
-        analysis = build_fallback_repo_analysis(context)
+        runtime = next(snippet for snippet in context["evidenceSnippets"] if "· runtime" in snippet["title"])
 
         self.assertIn("· POST", first["title"])
         self.assertNotIn("· runtime", first["title"])
-        self.assertIn("POST handler", analysis["questions"][0]["question"])
+        self.assertEqual(first["quality"], "strong")
+        self.assertEqual(runtime["quality"], "conditional")
 
     def test_runtime_scope_is_not_accepted_as_request_flow_evidence(self):
         runtime_evidence = {
@@ -163,6 +164,166 @@ class RepoEvidenceTest(unittest.TestCase):
         code_lines = [line for line in excerpt.splitlines() if line and "코드 생략" not in line]
         self.assertTrue(all(line.startswith("const value") for line in code_lines))
 
+    def test_symbol_evidence_keeps_later_prompt_body(self):
+        padding = "\n".join(f"    value_{index} = normalize(answer)" for index in range(45))
+        content = (
+            "def evaluate_answer(question, answer):\n"
+            "    if not answer:\n        return fallback\n"
+            f"{padding}\n"
+            "    prompt = f\"\"\"Question: {question}\\nAnswer: {answer}\\nRelevant code excerpts\"\"\"\n"
+            "    return call_model(prompt)\n"
+        )
+        context = build_repo_static_context(
+            sample_repo(),
+            [{"path": "apps/api/app/services/evaluation.py", "content": content, "size": len(content)}],
+            "balanced",
+            "standard",
+            ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"],
+            [],
+        )
+
+        snippet = next(item for item in context["evidenceSnippets"] if "evaluate_answer" in item["title"])
+        self.assertTrue(snippet["excerpt"].startswith("def evaluate_answer"))
+        self.assertIn("Relevant code excerpts", snippet["excerpt"])
+        self.assertIn("return call_model(prompt)", snippet["excerpt"])
+
+    def test_keyword_evidence_starts_at_nearest_function_declaration(self):
+        content = (
+            "def evaluate_answer(question, answer):\n"
+            "    body = validate(answer)\n"
+            "    result = call_model(body)\n"
+            "    return result\n"
+        )
+
+        data_chunk = next(excerpt for title, excerpt in extract_keyword_chunks(content, "apps/api/app/services/evaluation.py") if title == "data flow")
+
+        self.assertTrue(data_chunk.startswith("def evaluate_answer"))
+        self.assertIn("body = validate(answer)", data_chunk)
+
+    def test_url_symbol_evidence_starts_at_function_and_contains_all_constraints(self):
+        prefix = "\n".join(f"# unrelated line {index}" for index in range(180))
+        parser = (
+            "def parse_github_url(value):\n"
+            "    parsed = urlparse(value)\n"
+            "    if parsed.scheme != 'https':\n        raise ValueError('https only')\n"
+            "    if parsed.hostname != 'github.com':\n        raise ValueError('github only')\n"
+            "    return parsed.path\n"
+        )
+        content = f"{prefix}\n{parser}"
+        context = build_repo_static_context(
+            sample_repo(),
+            [{"path": "apps/api/app/services/github_repo.py", "content": content, "size": len(content)}],
+            "balanced",
+            "standard",
+            ["구조 이해", "요청 흐름", "데이터 흐름", "변경 영향도", "면접형"],
+            [],
+        )
+
+        snippet = next(item for item in context["evidenceSnippets"] if "parse_github_url" in item["title"])
+        code_lines = [line for line in snippet["excerpt"].splitlines() if line and "코드 생략" not in line]
+        self.assertEqual(code_lines[0], "def parse_github_url(value):")
+        self.assertIn("parsed.scheme != 'https'", snippet["excerpt"])
+        self.assertIn("parsed.hostname != 'github.com'", snippet["excerpt"])
+        self.assertIn("return parsed.path", snippet["excerpt"])
+        self.assertTrue(snippet["excerpt"].startswith("... 이전 코드 생략 ..."))
+
+    def test_request_flow_rejects_unconnected_frontend_and_python_service(self):
+        route = {
+            "id": "route:POST",
+            "path": "apps/web/src/app/api/analyze/route.ts",
+            "title": "apps/web/src/app/api/analyze/route.ts · POST",
+            "reason": "Next.js 요청 진입점",
+            "excerpt": "export async function POST(request) { return fetch(backendUrl); }",
+            "kind": "entry",
+            "quality": "strong",
+        }
+        service = {
+            "id": "repo-analysis:build",
+            "path": "apps/api/app/services/repo_analysis.py",
+            "title": "apps/api/app/services/repo_analysis.py · build_repo_static_context",
+            "reason": "Python 분석 서비스",
+            "excerpt": "def build_repo_static_context(files):\n    return select_context_files(files)",
+            "kind": "service",
+            "quality": "strong",
+        }
+
+        self.assertFalse(evidence_snippets_connected([route, service]))
+
+        relationship_question = {
+            "type": "구조 이해",
+            "question": "route.ts의 POST handler와 build_repo_static_context 역할과 연결 흐름을 설명해주세요.",
+            "evidenceSnippets": [route, service],
+        }
+        self.assertIn("추적 가능한", question_capability_gap(relationship_question))
+
+        guarded = enforce_repo_question_quality(
+            [{"id": "q1", "type": "구조 이해", "question": relationship_question["question"], "relatedFiles": [route["path"], service["path"]], "evidenceSnippets": [route, service]}],
+            [],
+            [route, service],
+        )
+        self.assertEqual(len(guarded[0]["evidenceSnippets"]), 1)
+        self.assertNotIn("연결 흐름", guarded[0]["question"])
+
+        impact_guarded = enforce_repo_question_quality(
+            [{"id": "q4", "type": "변경 영향도", "question": "build_repo_static_context를 수정할 때 route.ts의 POST handler까지 어떤 영향이 이어질 수 있나요?", "relatedFiles": [service["path"], route["path"]], "evidenceSnippets": [service, route]}],
+            [],
+            [route, service],
+        )
+        self.assertEqual(len(impact_guarded[0]["evidenceSnippets"]), 1)
+        self.assertNotIn("route.ts의 POST handler까지", impact_guarded[0]["question"])
+
+    def test_request_flow_allows_traceable_middle_handler_chain(self):
+        route = {
+            "path": "apps/web/src/app/api/analyze-commit/route.ts",
+            "title": "apps/web/src/app/api/analyze-commit/route.ts · POST",
+            "excerpt": "export async function POST(request) { return fetch('/analyze-commit'); }",
+        }
+        handler = {
+            "path": "apps/api/app/api/commit.py",
+            "title": "apps/api/app/api/commit.py · analyze_commit",
+            "excerpt": "@router.post('/analyze-commit')\ndef analyze_commit(payload):\n    return build_commit_static_context(payload)",
+        }
+        service = {
+            "path": "apps/api/app/services/commit_analysis.py",
+            "title": "apps/api/app/services/commit_analysis.py · build_commit_static_context",
+            "excerpt": "def build_commit_static_context(changes):\n    return select_changes(changes)",
+        }
+        question = {
+            "type": "요청 흐름",
+            "question": "route.ts에서 commit.py를 거쳐 build_commit_static_context까지 요청 처리가 어떻게 이어지나요?",
+            "evidenceSnippets": [route, service, handler],
+        }
+
+        self.assertTrue(evidence_snippets_connected([route, service, handler]))
+        self.assertIsNone(question_capability_gap(question))
+
+    def test_quality_guard_avoids_reusing_same_path_and_scope(self):
+        first = {
+            "id": "evaluation.py:evaluate_answer",
+            "path": "apps/api/app/services/evaluation.py",
+            "title": "apps/api/app/services/evaluation.py · evaluate_answer",
+            "reason": "단일 답변 평가",
+            "excerpt": "def evaluate_answer(answer):\n    return grade(answer)",
+            "kind": "service",
+            "quality": "strong",
+        }
+        alternate = {
+            **first,
+            "id": "evaluation.py:evaluate_quiz",
+            "title": "apps/api/app/services/evaluation.py · evaluate_quiz",
+            "reason": "전체 퀴즈 평가",
+            "excerpt": "def evaluate_quiz(answers):\n    return aggregate(answers)",
+        }
+        questions = [
+            {"id": "q3", "type": "데이터 흐름", "question": "evaluate_answer가 답변을 어떻게 평가하나요?", "relatedFiles": [first["path"]], "evidenceSnippets": [first]},
+            {"id": "q4", "type": "변경 영향도", "question": "evaluate_answer 변경 시 어떤 영향을 확인하나요?", "relatedFiles": [first["path"]], "evidenceSnippets": [first]},
+        ]
+
+        guarded = enforce_repo_question_quality(questions, questions, [first, alternate])
+
+        self.assertEqual(guarded[0]["evidenceSnippets"][0]["id"], first["id"])
+        self.assertEqual(guarded[1]["evidenceSnippets"][0]["id"], alternate["id"])
+
     def test_repo_question_evidence_dedupes_same_path_and_scope(self):
         first = {
             "id": "src-app-api-users-route.ts:0",
@@ -197,7 +358,8 @@ class RepoEvidenceTest(unittest.TestCase):
 
         analysis = build_fallback_repo_analysis(context)
 
-        self.assertEqual(len(analysis["questions"]), 5)
+        self.assertGreaterEqual(len(analysis["questions"]), 3)
+        self.assertLessEqual(len(analysis["questions"]), 5)
         self.assertTrue(all(question["evidenceSnippets"] for question in analysis["questions"]))
 
     def test_keyword_evidence_prefers_error_handling_region(self):
@@ -417,8 +579,11 @@ class RepoEvidenceTest(unittest.TestCase):
 
         guarded = enforce_repo_question_quality(questions, questions, evidence)
 
-        self.assertEqual(len({question["question"] for question in guarded}), 5)
-        self.assertEqual(len({question["relatedFiles"][0] for question in guarded}), 5)
+        # Evidence quality takes precedence over the requested count: once a
+        # scope has been consumed, the guard may drop unrecoverable duplicates.
+        self.assertEqual(len({question["question"] for question in guarded}), len(guarded))
+        self.assertEqual(len({question["relatedFiles"][0] for question in guarded}), len(guarded))
+        self.assertLessEqual(len(guarded), 5)
 
     def test_repo_refine_requires_request_flow_to_include_entry_and_second_file_when_available(self):
         entry_evidence = {
@@ -451,7 +616,7 @@ class RepoEvidenceTest(unittest.TestCase):
         self.assertEqual(refined[0]["relatedFiles"], ["src/app/api/users/route.ts", "src/lib/user-service.ts"])
         self.assertEqual([snippet["id"] for snippet in refined[0]["evidenceSnippets"]], ["route.ts:0", "service.ts:0"])
 
-    def test_repo_evidence_keeps_one_snippet_for_each_context_file(self):
+    def test_repo_evidence_does_not_force_one_snippet_for_each_context_file(self):
         files = [
             {
                 "path": f"src/lib/file-{index}.ts",
@@ -470,9 +635,8 @@ class RepoEvidenceTest(unittest.TestCase):
             [],
         )
 
-        evidence_paths = {snippet["path"] for snippet in context["evidenceSnippets"]}
-
-        self.assertTrue(all(file["path"] in evidence_paths for file in files))
+        self.assertLessEqual(len(context["evidenceSnippets"]), 24)
+        self.assertTrue(all(snippet.get("quality") == "strong" for snippet in context["evidenceSnippets"]))
 
     def test_repo_refine_rewrites_invalid_fallback_instead_of_keeping_wrong_evidence(self):
         config_evidence = {
@@ -510,7 +674,7 @@ class RepoEvidenceTest(unittest.TestCase):
 
         refined = refine_repo_question_evidence([question], fallback, [config_evidence, entry_evidence, service_evidence])
 
-        self.assertEqual(refined[0]["relatedFiles"], ["apps/api/app/api/repo.py", "apps/api/app/services/github_repo.py"])
+        self.assertEqual(refined[0]["relatedFiles"], ["apps/api/app/api/repo.py"])
         self.assertNotIn("config.py를 포함한 요청 처리 흐름", refined[0]["question"])
 
     def test_repo_refine_rejects_config_package_as_request_flow_core(self):
@@ -556,7 +720,7 @@ class RepoEvidenceTest(unittest.TestCase):
 
         refined = refine_repo_question_evidence([question], [question], [config_evidence, package_evidence, entry_evidence, service_evidence])
 
-        self.assertEqual(refined[0]["relatedFiles"][:2], ["apps/api/app/api/repo.py", "apps/api/app/services/repo_analysis.py"])
+        self.assertEqual(refined[0]["relatedFiles"], ["apps/api/app/api/repo.py"])
         self.assertNotIn("config.py에서 시작한 요청 흐름", refined[0]["question"])
 
     def test_repo_refine_rejects_tally_widget_as_data_storage_flow(self):

@@ -23,6 +23,8 @@ def analyze_commit(payload: AnalyzeCommitRequest, quota: dict = Depends(commit_q
         context = build_commit_static_context(commit_changes)
         fallback = build_fallback_commit_analysis(context)
         analysis = generate_commit_analysis(context, fallback)
+        if not analysis.get("questions"):
+            raise HTTPException(status_code=422, detail=analysis.get("ai", {}).get("reason") or "분석 가능한 실행 흐름이 부족합니다.")
         return {"analysis": analysis, "limits": consume_authenticated_quota(quota)}
     except HTTPException:
         raise

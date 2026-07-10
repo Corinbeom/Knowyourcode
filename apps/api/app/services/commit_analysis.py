@@ -8,6 +8,7 @@ MAX_CONTEXT_FILES = 12
 MAX_PATCH_EXCERPT = 2400
 MAX_EVIDENCE_SNIPPETS = 18
 MAX_HUNK_EXCERPT = 1800
+MIN_COMMIT_QUESTIONS = 2
 OMITTED_AFTER_DIFF_MARKER = "... 이후 변경 내용 생략 ..."
 
 
@@ -29,16 +30,15 @@ def build_commit_static_context(commit_changes: dict) -> dict:
 def build_fallback_commit_analysis(context: dict) -> dict:
     key_files = context["contextFiles"][:6]
     evidence_snippets = context.get("evidenceSnippets", [])
-    first_path = key_files[0]["path"] if len(key_files) > 0 else "변경 파일"
-    second_path = key_files[1]["path"] if len(key_files) > 1 else first_path
-    third_path = key_files[2]["path"] if len(key_files) > 2 else second_path
-    fourth_path = key_files[3]["path"] if len(key_files) > 3 else first_path
-    fallback_evidence = [
-        pick_evidence_for_path(evidence_snippets, first_path),
-        pick_evidence_for_path(evidence_snippets, second_path),
-        pick_evidence_for_path(evidence_snippets, third_path),
-        pick_evidence_for_path(evidence_snippets, fourth_path),
-    ]
+    question_evidence = strong_commit_evidence(evidence_snippets)
+    if len(question_evidence) < MIN_COMMIT_QUESTIONS:
+        return build_insufficient_commit_analysis(context)
+
+    question_count = min(4, len(question_evidence))
+    selected_evidence = question_evidence[:question_count]
+    fallback_evidence = (selected_evidence + [selected_evidence[-1]] * 4)[:4]
+    question_paths = [item["path"] for item in fallback_evidence]
+    first_path, second_path, third_path, fourth_path = (question_paths + [question_paths[-1]] * 4)[:4]
 
     return {
         "commit": context["commit"],
@@ -61,7 +61,8 @@ def build_fallback_commit_analysis(context: dict) -> dict:
             "testSuggestions": ["변경된 기능의 정상 흐름과 예외 흐름을 함께 검증하세요."],
             "changedFiles": key_files,
         },
-        "questions": [
+        "questions": compact_questions(
+            [
             {
                 "id": "q1",
                 "type": "변경 의도",
@@ -86,12 +87,43 @@ def build_fallback_commit_analysis(context: dict) -> dict:
             {
                 "id": "q4",
                 "type": "리뷰형",
-                "question": f"코드 리뷰에서 {fourth_path} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?",
+                "question": f"코드 리뷰에서 {fourth_path} 변경의 구현 의도와 선택한 구현 방식을 어떻게 설명하겠습니까?",
                 "relatedFiles": [fourth_path],
                 "evidenceSnippets": compact_evidence_list([fallback_evidence[3]]),
             },
-        ],
+            ][:question_count]
+        ),
     }
+
+
+def build_insufficient_commit_analysis(context: dict) -> dict:
+    return {
+        "commit": context["commit"],
+        "analyzedAt": datetime.now(timezone.utc).isoformat(),
+        "fileCount": len(context["files"]),
+        "totalAdditions": context["totalAdditions"],
+        "totalDeletions": context["totalDeletions"],
+        "ai": {
+            "provider": "fallback",
+            "used": False,
+            "reason": "분석 가능한 실행 흐름이 부족합니다.",
+        },
+        "contextFiles": key_context_files(context),
+        "evidenceSnippets": context.get("evidenceSnippets", []),
+        "report": {
+            "oneLineSummary": f"{context['commit']['shortSha']} 커밋에서 질문으로 검증할 만한 substantive diff 근거가 충분하지 않습니다.",
+            "changeIntent": "문서, 바이너리, patch unavailable, 상수-only 변경만으로는 변경 의도를 코드 흐름 기준으로 평가하지 않습니다.",
+            "impactScope": ["실행 함수, handler, service, 검증/변환 흐름이 포함된 diff를 분석해주세요."],
+            "riskAreas": ["분석 가능한 실행 흐름이 부족해 리뷰 위험 문항을 생성하지 않았습니다."],
+            "testSuggestions": ["substantive code diff가 있는 커밋으로 다시 분석해주세요."],
+            "changedFiles": key_context_files(context),
+        },
+        "questions": [],
+    }
+
+
+def key_context_files(context: dict) -> list[dict]:
+    return context.get("contextFiles", [])[:6]
 
 
 def split_patch_hunks(file: dict) -> list[dict]:
@@ -132,9 +164,9 @@ def build_commit_evidence_snippets(files: list[dict]) -> list[dict]:
         hunks = split_patch_hunks(file)
         if hunks:
             for hunk in hunks:
-                snippets.append(to_code_evidence(file, hunk))
-        else:
-            snippets.append(to_code_evidence(file, None))
+                evidence = to_code_evidence(file, hunk)
+                if evidence.get("quality") != "weak":
+                    snippets.append(evidence)
 
     return sorted(snippets, key=lambda item: item["score"], reverse=True)[:MAX_EVIDENCE_SNIPPETS]
 
@@ -155,8 +187,60 @@ def to_code_evidence(file: dict, hunk: dict | None) -> dict:
         "excerpt": excerpt,
         "kind": change_type,
         "changeType": change_type,
+        "quality": classify_commit_evidence(path, header, excerpt),
         "score": score_commit_file(file) + score_hunk_text(excerpt),
     }
+
+
+def classify_commit_evidence(path: str, header: str, excerpt: str) -> str:
+    if not excerpt.strip() or header == "patch unavailable" or "patch를 제공하지 않는 파일" in excerpt:
+        return "weak"
+    if re.search(r"\.(md|mdx|txt|png|jpe?g|gif|svg|ico|lock)$", path, re.I):
+        return "weak"
+    changed_lines = "\n".join(
+        line[1:].strip()
+        for line in excerpt.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+    meaningful = strip_diff_noise(changed_lines)
+    if not meaningful.strip():
+        return "weak"
+    if is_constant_only_change(meaningful):
+        return "conditional"
+    if has_substantive_diff_flow(meaningful):
+        return "strong"
+    return "conditional"
+
+
+def strip_diff_noise(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "//", "/*", "*")):
+            continue
+        if re.match(r"^(import|from\s+\S+\s+import|export\s+\{)", stripped):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def is_constant_only_change(text: str) -> bool:
+    return bool(re.fullmatch(r"(?:(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*[^;\n]+;?\s*)+", text.strip(), re.S))
+
+
+def has_substantive_diff_flow(text: str) -> bool:
+    return bool(
+        re.search(r"\b(function|def|class|async|await|return|if|elif|else|for|while|try|except|catch|throw|raise|with|yield)\b", text)
+        and re.search(r"\w+\s*\(|return\s+|=>|request\.|response\.|fetch|query|save|create|update|delete|find|parse|validate", text, re.I)
+    )
+
+
+def strong_commit_evidence(snippets: list[dict]) -> list[dict]:
+    return [snippet for snippet in snippets if snippet.get("quality") == "strong"]
+
+
+def compact_questions(questions: list[dict]) -> list[dict]:
+    return [question for question in questions if question.get("evidenceSnippets")]
 
 
 def fallback_evidence_excerpt(file: dict) -> str:
@@ -195,7 +279,7 @@ def compact_evidence_list(snippets: list[dict | None]) -> list[dict]:
         if not snippet or snippet.get("id") in seen:
             continue
         seen.add(snippet.get("id"))
-        result.append({key: snippet[key] for key in ["id", "path", "title", "reason", "excerpt", "kind"] if key in snippet})
+        result.append({key: snippet[key] for key in ["id", "path", "title", "reason", "excerpt", "kind", "quality"] if key in snippet})
     return result
 
 

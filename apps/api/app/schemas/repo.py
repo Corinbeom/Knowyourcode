@@ -42,6 +42,7 @@ class CodeEvidence(BaseModel):
     reason: str
     excerpt: str = ""
     kind: str = "other"
+    quality: Literal["strong", "conditional", "weak"] | None = None
 
 
 class ProjectReport(BaseModel):

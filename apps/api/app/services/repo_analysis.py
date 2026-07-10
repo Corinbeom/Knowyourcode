@@ -8,7 +8,8 @@ QUESTION_TYPES = ["구조 이해", "요청 흐름", "데이터 흐름", "변경 
 MAX_CONTEXT_FILES = 15
 MAX_EXCERPT_LENGTH = 1600
 MAX_EVIDENCE_SNIPPETS = 24
-MAX_REPO_SNIPPET_LENGTH = 1200
+MAX_REPO_SNIPPET_LENGTH = 2400
+MIN_PROJECT_QUESTIONS = 3
 OMITTED_BEFORE_MARKER = "... 이전 코드 생략 ..."
 OMITTED_AFTER_MARKER = "... 이후 코드 생략 ..."
 
@@ -73,18 +74,29 @@ def build_repo_static_context(
 def build_fallback_repo_analysis(context: dict) -> dict:
     key_files = context["contextFiles"][:6]
     evidence_snippets = context.get("evidenceSnippets", [])
-    request_evidence = pick_evidence_by_capability(evidence_snippets, supports_request_or_service_evidence, ["entry", "service"], 3)
-    data_evidence = pick_evidence_by_capability(evidence_snippets, supports_data_flow_evidence, ["data", "service", "entry"], 3)
-    request_files = [{"path": path} for path in evidence_paths(request_evidence)] or pick_context_files(context["contextFiles"], ["entry", "service"], 2)
-    structure_file = pick_structure_context_file(context["contextFiles"], request_files)
-    data_files = [{"path": path} for path in evidence_paths(data_evidence)] or pick_context_files(context["contextFiles"], ["data", "service"], 2)
-    impact_files = pick_context_files(context["contextFiles"], ["service", "ui", "entry", "config"], 2)
-    interview_files = pick_context_files(context["contextFiles"], ["entry", "service", "data", "config"], 2)
-    first_path = structure_file["path"] if structure_file else "핵심 파일"
+    question_evidence = strong_repo_evidence(evidence_snippets)
+    if len(question_evidence) < MIN_PROJECT_QUESTIONS:
+        return build_insufficient_repo_analysis(context)
+    question_count = min(5, len(question_evidence))
+
+    request_evidence = connected_request_evidence(
+        pick_evidence_by_capability(question_evidence, supports_request_or_service_evidence, ["entry", "service"], 3)
+    ) or question_evidence[:1]
+    data_evidence = pick_evidence_by_capability(question_evidence, supports_data_flow_evidence, ["data", "service", "entry"], 3) or question_evidence[:2]
+    impact_evidence = connected_request_evidence(
+        sorted(question_evidence, key=lambda item: ["service", "entry", "data", "ui", "other"].index(item.get("kind")) if item.get("kind") in ["service", "entry", "data", "ui", "other"] else 5)[:2]
+    )
+    interview_evidence = sorted(question_evidence, key=lambda item: ["entry", "service", "data", "ui", "other"].index(item.get("kind")) if item.get("kind") in ["entry", "service", "data", "ui", "other"] else 5)[:2]
+    structure_candidate = next((item for item in question_evidence if item.get("kind") in {"entry", "service", "ui"}), question_evidence[0])
+    request_files = [{"path": path} for path in evidence_paths(request_evidence)]
+    data_files = [{"path": path} for path in evidence_paths(data_evidence)]
+    impact_files = [{"path": path} for path in evidence_paths(impact_evidence)]
+    interview_files = [{"path": path} for path in evidence_paths(interview_evidence)]
+    first_path = structure_candidate["path"]
     second_path = request_files[0]["path"] if request_files else first_path
     data_path = data_files[0]["path"] if data_files else first_path
     question_types = context["questionTypes"]
-    structure_evidence = compact_evidence_list([pick_evidence_for_path(evidence_snippets, first_path)])
+    structure_evidence = compact_evidence_list([structure_candidate])
     structure_subject = fallback_question_subject(structure_evidence[0]) if structure_evidence else f"{first_path}의 코드 조각"
 
     return {
@@ -113,43 +125,72 @@ def build_fallback_repo_analysis(context: dict) -> dict:
                 "README에 적힌 기술 스택이 실제 코드에서 어디에 사용되나요?",
             ],
         },
-        "questions": [
+        "questions": compact_questions(
+            [
             {
                 "id": "q1",
                 "type": question_types[0],
-                "question": f"{structure_subject}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?",
+                "question": f"{with_korean_particle(structure_subject, '은', '는')} 선택된 코드 흐름에서 어떤 역할을 담당하나요?",
                 "relatedFiles": [first_path],
                 "evidenceSnippets": structure_evidence,
             },
             {
                 "id": "q2",
                 "type": question_types[1 % len(question_types)],
-                "question": f"{second_path}를 포함한 요청 처리 흐름이 어떤 파일들을 거쳐 이어지는지 설명해주세요.",
+                "question": f"{with_korean_particle(second_path, '을', '를')} 포함한 요청 처리 흐름이 어떤 파일들을 거쳐 이어지는지 설명해주세요.",
                 "relatedFiles": [file["path"] for file in request_files] or [second_path],
-                "evidenceSnippets": compact_evidence_list(request_evidence or [pick_evidence_for_path(evidence_snippets, file["path"]) for file in request_files] or [pick_evidence_for_path(evidence_snippets, second_path)]),
+                "evidenceSnippets": compact_evidence_list(request_evidence),
             },
             {
                 "id": "q3",
                 "type": question_types[2 % len(question_types)],
                 "question": f"{data_path}에서 데이터 입력, 검증, 조회 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.",
                 "relatedFiles": [file["path"] for file in data_files] or [first_path],
-                "evidenceSnippets": compact_evidence_list(data_evidence or [pick_evidence_for_path(evidence_snippets, file["path"]) for file in data_files] or [pick_evidence_for_path(evidence_snippets, first_path)]),
+                "evidenceSnippets": compact_evidence_list(data_evidence),
             },
             {
                 "id": "q4",
                 "type": question_types[3 % len(question_types)],
                 "question": f"{first_path}의 동작을 수정할 때 함께 확인해야 할 영향 범위와 파일은 무엇인가요?",
                 "relatedFiles": [file["path"] for file in impact_files] or [first_path],
-                "evidenceSnippets": compact_evidence_list([pick_evidence_for_path(evidence_snippets, file["path"]) for file in impact_files] or [pick_evidence_for_path(evidence_snippets, first_path)]),
+                "evidenceSnippets": compact_evidence_list(impact_evidence),
             },
             {
                 "id": "q5",
                 "type": question_types[4 % len(question_types)],
-                "question": f"면접이나 코드리뷰에서 {second_path}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?",
+                "question": f"면접이나 코드리뷰에서 {with_korean_particle(second_path, '을', '를')} 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?",
                 "relatedFiles": [file["path"] for file in interview_files] or [second_path],
-                "evidenceSnippets": compact_evidence_list([pick_evidence_for_path(evidence_snippets, file["path"]) for file in interview_files] or [pick_evidence_for_path(evidence_snippets, second_path)]),
+                "evidenceSnippets": compact_evidence_list(interview_evidence),
             },
-        ],
+            ][:question_count]
+        ),
+    }
+
+
+def build_insufficient_repo_analysis(context: dict) -> dict:
+    return {
+        "repo": context["repo"],
+        "analyzedAt": datetime.now(timezone.utc).isoformat(),
+        "fileCount": context["fileCount"],
+        "focus": context["focus"],
+        "questionLevel": context["questionLevel"],
+        "questionTypes": context["questionTypes"],
+        "questionTargets": context["questionTargets"],
+        "ai": {"provider": "fallback", "used": False, "reason": "분석 가능한 실행 흐름이 부족합니다."},
+        "contextFiles": context["contextFiles"],
+        "evidenceSnippets": context.get("evidenceSnippets", []),
+        "report": {
+            "oneLineSummary": f"{context['repo']['repo']} 저장소에서 질문으로 검증할 만한 실행 코드 근거가 충분하지 않습니다.",
+            "techStack": infer_stack(context["packageInfo"], context["contextFiles"]),
+            "folderStructure": context["tree"][:12],
+            "coreFeatures": ["강한 실행 흐름 evidence가 부족해 코드 이해도 문항을 생성하지 않았습니다."],
+            "requestFlow": "라우트, handler, service처럼 호출/조건/반환이 드러나는 실행 흐름을 찾지 못했습니다.",
+            "dataFlow": "검증, 변환, 조회, 저장처럼 실제 코드 흐름으로 연결된 근거가 부족합니다.",
+            "keyFiles": context["contextFiles"][:6],
+            "difficulty": "어려움",
+            "riskyQuestions": ["분석 가능한 실행 흐름이 있는 소스 파일을 포함해 다시 분석해주세요."],
+        },
+        "questions": [],
     }
 
 
@@ -164,32 +205,37 @@ def fallback_question_subject(snippet: dict) -> str:
     return f"{path}의 {scope} 코드"
 
 
-def build_repo_evidence_snippets(files: list[dict], focus: str, question_targets: list[str]) -> list[dict]:
-    guaranteed = []
-    extras = []
-    for file in files:
-        file_snippets = to_repo_file_evidence(file, focus, question_targets)
-        if file_snippets:
-            guaranteed.append(file_snippets[0])
-            extras.extend(file_snippets[1:])
+def with_korean_particle(value: str, consonant_particle: str, vowel_particle: str) -> str:
+    stripped = value.rstrip()
+    if not stripped:
+        return value
+    last = stripped[-1]
+    has_final_consonant = "가" <= last <= "힣" and (ord(last) - ord("가")) % 28 != 0
+    return f"{stripped}{consonant_particle if has_final_consonant else vowel_particle}"
 
-    selected = [*guaranteed, *sorted(extras, key=lambda item: item["score"], reverse=True)]
-    return dedupe_evidence(selected)[: max(MAX_EVIDENCE_SNIPPETS, len(guaranteed))]
+
+def build_repo_evidence_snippets(files: list[dict], focus: str, question_targets: list[str]) -> list[dict]:
+    snippets = []
+    for file in files:
+        snippets.extend(to_repo_file_evidence(file, focus, question_targets))
+
+    selected = sorted(snippets, key=lambda item: item["score"], reverse=True)
+    return dedupe_evidence(selected)[:MAX_EVIDENCE_SNIPPETS]
 
 
 def to_repo_file_evidence(file: dict, focus: str, question_targets: list[str]) -> list[dict]:
     path = str(file.get("path") or "unknown")
     content = redact_secrets(str(file.get("content") or ""))
     if not content:
-        return [make_repo_evidence(file, 0, "file unavailable", "", focus, question_targets)]
+        return []
 
     chunks = rank_repo_chunks([*extract_symbol_chunks(content)[:3], *extract_keyword_chunks(content, path)[:3]], path)
-    if not any(excerpt.strip() for _, excerpt in chunks):
-        chunks = [("file overview", slice_around(content, 0, MAX_REPO_SNIPPET_LENGTH))]
     return [
-        make_repo_evidence(file, index, title, excerpt, focus, question_targets)
+        evidence
         for index, (title, excerpt) in enumerate(chunks)
+        for evidence in [make_repo_evidence(file, index, title, excerpt, focus, question_targets)]
         if excerpt.strip()
+        and evidence.get("quality") != "weak"
     ]
 
 
@@ -214,7 +260,7 @@ def extract_symbol_chunks(content: str) -> list[tuple[str, str]]:
         if key in seen:
             continue
         seen.add(key)
-        chunks.append((symbol, slice_around(content, start, MAX_REPO_SNIPPET_LENGTH)))
+        chunks.append((symbol, slice_symbol_forward(content, start, MAX_REPO_SNIPPET_LENGTH)))
         if len(chunks) >= 6:
             break
     return chunks
@@ -259,18 +305,31 @@ def extract_keyword_chunks(content: str, path: str) -> list[tuple[str, str]]:
     seen_ranges = set()
     for title, pattern in keyword_groups:
         for match in re.finditer(pattern, content, re.I):
-            start = max(match.start() - MAX_REPO_SNIPPET_LENGTH // 2, 0)
+            symbol_start = find_symbol_start_before(content, match.start())
+            start = symbol_start if symbol_start is not None else max(match.start() - MAX_REPO_SNIPPET_LENGTH // 2, 0)
             range_key = start // 160
             if range_key in seen_ranges:
                 continue
             seen_ranges.add(range_key)
-            chunks.append((title, slice_around(content, match.start(), MAX_REPO_SNIPPET_LENGTH)))
+            chunks.append((title, slice_symbol_forward(content, symbol_start if symbol_start is not None else match.start(), MAX_REPO_SNIPPET_LENGTH)))
             break
     return chunks
 
 
+def find_symbol_start_before(content: str, index: int) -> int | None:
+    prefix = content[:index]
+    pattern = re.compile(
+        r"^\s*(?:export\s+)?(?:async\s+)?(?:function|def|class)\s+[A-Za-z_][A-Za-z0-9_]*"
+        r"|^\s*(?:export\s+)?(?:const|let|var)\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:async\s+)?(?:\([^\n]*\)|[A-Za-z_][A-Za-z0-9_]*)\s*=>",
+        re.M,
+    )
+    matches = list(pattern.finditer(prefix))
+    return matches[-1].start() if matches else None
+
+
 def make_repo_evidence(file: dict, index: int, title: str, excerpt: str, focus: str, question_targets: list[str]) -> dict:
     path = str(file.get("path") or "unknown")
+    quality = classify_repo_evidence(path, title, excerpt)
     return {
         "id": f"{sanitize_evidence_id(path)}:{index}",
         "path": path,
@@ -278,8 +337,69 @@ def make_repo_evidence(file: dict, index: int, title: str, excerpt: str, focus: 
         "reason": infer_evidence_reason(path, title, excerpt),
         "excerpt": excerpt[:MAX_REPO_SNIPPET_LENGTH],
         "kind": file_layer(path),
+        "quality": quality,
         "score": score_file(file, focus, question_targets) + score_repo_excerpt(title, excerpt),
     }
+
+
+def classify_repo_evidence(path: str, title: str, excerpt: str) -> str:
+    text = strip_comments_and_imports(excerpt)
+    if not text.strip():
+        return "weak"
+    if title in {"file overview", "file unavailable"} or is_doc_only_path(path):
+        return "weak"
+    if is_constant_only_scope(title, text) or is_non_executable_constant_symbol(title, text):
+        return "conditional"
+    if is_contract_like_path(path) and not has_executable_flow(text):
+        return "conditional"
+    if has_executable_flow(text):
+        return "strong"
+    return "conditional" if re.search(r"\b(class|interface|type|schema|model|config|settings)\b", text, re.I) else "weak"
+
+
+def strip_comments_and_imports(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "//", "/*", "*", "<!--")):
+            continue
+        if re.match(r"^(import|from\s+\S+\s+import|export\s+\{)", stripped):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def is_doc_only_path(path: str) -> bool:
+    return bool(re.search(r"(^|/)(README|CHANGELOG|LICENSE|CONTRIBUTING)(\.[A-Za-z0-9]+)?$|\.mdx?$", path, re.I))
+
+
+def is_constant_only_scope(title: str, text: str) -> bool:
+    if re.fullmatch(r"(runtime|dynamic|revalidate|preferredRegion|maxDuration|fetchCache|configuration)", title):
+        return True
+    return bool(re.fullmatch(r"(export\s+)?(const|let|var)\s+\w+\s*=\s*[^;]+;?", text.strip(), re.S))
+
+
+def is_non_executable_constant_symbol(title: str, text: str) -> bool:
+    declaration = re.search(rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(title)}\s*=\s*([^\n;]+)", text)
+    if not declaration:
+        return False
+    initializer = declaration.group(1)
+    return "=>" not in initializer and not re.search(r"\bfunction\b", initializer)
+
+
+def has_executable_flow(text: str) -> bool:
+    return bool(
+        re.search(r"\b(function|def|class|async|await|return|if|elif|else|for|while|try|except|catch|throw|raise|with|yield)\b", text)
+        and re.search(r"\w+\s*\(|return\s+|=>|request\.|response\.|fetch|query|save|create|update|delete|find|parse|validate", text, re.I)
+    )
+
+
+def strong_repo_evidence(snippets: list[dict]) -> list[dict]:
+    return [snippet for snippet in snippets if snippet.get("quality") == "strong"]
+
+
+def compact_questions(questions: list[dict]) -> list[dict]:
+    return [question for question in questions if question.get("evidenceSnippets")]
 
 
 def score_repo_excerpt(title: str, excerpt: str) -> int:
@@ -360,6 +480,38 @@ def supports_request_or_service_evidence(snippet: dict) -> bool:
     return supports_request_flow_evidence(snippet) or is_request_helper_evidence(snippet)
 
 
+def connected_request_evidence(snippets: list[dict]) -> list[dict]:
+    if len(snippets) <= 1:
+        return snippets
+    selected = [snippets[0]]
+    remaining = list(snippets[1:])
+    connected_tokens = request_connection_tokens(snippets[0])
+    while remaining:
+        newly_connected = [snippet for snippet in remaining if connected_tokens & request_connection_tokens(snippet)]
+        if not newly_connected:
+            break
+        for snippet in newly_connected:
+            selected.append(snippet)
+            connected_tokens.update(request_connection_tokens(snippet))
+            remaining.remove(snippet)
+    return selected
+
+
+def request_connection_tokens(snippet: dict) -> set[str]:
+    text = f"{snippet.get('title', '')}\n{snippet.get('excerpt', '')}"
+    tokens = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(", text))
+    tokens.update(re.findall(r"[\"'](/[-A-Za-z0-9_/{}/.]{3,})[\"']", text))
+    for import_line in re.findall(r"^\s*(?:import|from)\s+.*$", text, re.M):
+        tokens.update(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b", import_line))
+    title = str(snippet.get("title") or "")
+    path = str(snippet.get("path") or "")
+    scope = title.rsplit("·", 1)[-1].strip() if "·" in title else title.replace(path, "", 1).strip(" ·-")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{3,}", scope):
+        tokens.add(scope)
+    stop_words = {"function", "request", "response", "json", "fetch", "return", "str", "int", "list", "dict", "nextresponse", "import", "from"}
+    return {token.lower() for token in tokens if token.lower() not in stop_words}
+
+
 def is_request_helper_evidence(snippet: dict) -> bool:
     if str(snippet.get("kind") or "") != "service":
         return False
@@ -409,7 +561,7 @@ def compact_evidence_list(snippets: list[dict | None]) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        result.append({key: snippet[key] for key in ["id", "path", "title", "reason", "excerpt", "kind"] if key in snippet})
+        result.append({key: snippet[key] for key in ["id", "path", "title", "reason", "excerpt", "kind", "quality"] if key in snippet})
     return result[:3]
 
 
@@ -520,6 +672,28 @@ def slice_around(content: str, index: int, length: int) -> str:
     if start > 0:
         parts.append(OMITTED_BEFORE_MARKER)
     parts.append(normalized[start:end].strip("\n"))
+    if end < len(normalized):
+        parts.append(OMITTED_AFTER_MARKER)
+    return "\n\n".join(parts)
+
+
+def slice_symbol_forward(content: str, index: int, length: int) -> str:
+    normalized = content.replace("\r\n", "\n")
+    if len(normalized) <= length:
+        return normalized
+
+    line_start = normalized.rfind("\n", 0, index) + 1
+    marker_overhead = (len(OMITTED_BEFORE_MARKER) + 2 if line_start > 0 else 0) + len(OMITTED_AFTER_MARKER) + 2
+    end = min(line_start + max(120, length - marker_overhead), len(normalized))
+    if end < len(normalized):
+        line_end = normalized.rfind("\n", line_start, end)
+        if line_end > line_start:
+            end = line_end
+
+    parts = []
+    if line_start > 0:
+        parts.append(OMITTED_BEFORE_MARKER)
+    parts.append(normalized[line_start:end].strip("\n"))
     if end < len(normalized):
         parts.append(OMITTED_AFTER_MARKER)
     return "\n\n".join(parts)

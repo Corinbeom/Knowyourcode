@@ -5,6 +5,7 @@ const MAX_CONTEXT_FILES = 12;
 const MAX_PATCH_EXCERPT = 2_400;
 const MAX_EVIDENCE_SNIPPETS = 18;
 const MAX_HUNK_EXCERPT = 1_800;
+const MIN_COMMIT_QUESTIONS = 2;
 const OMITTED_AFTER_DIFF_MARKER = "... 이후 변경 내용 생략 ...";
 
 export type CommitStaticContext = {
@@ -38,16 +39,32 @@ export function buildCommitStaticContext(input: {
 
 export function buildFallbackCommitAnalysis(context: CommitStaticContext): CommitAnalysisResult {
   const keyFiles = context.contextFiles.slice(0, 6);
-  const firstPath = keyFiles[0]?.path ?? "변경 파일";
-  const secondPath = keyFiles[1]?.path ?? firstPath;
-  const thirdPath = keyFiles[2]?.path ?? secondPath;
-  const fourthPath = keyFiles[3]?.path ?? firstPath;
-  const fallbackEvidence = [
-    pickEvidenceForPath(context.evidenceSnippets, firstPath),
-    pickEvidenceForPath(context.evidenceSnippets, secondPath),
-    pickEvidenceForPath(context.evidenceSnippets, thirdPath),
-    pickEvidenceForPath(context.evidenceSnippets, fourthPath)
-  ];
+  const questionEvidence = strongCommitEvidence(context.evidenceSnippets);
+  if (questionEvidence.length < MIN_COMMIT_QUESTIONS) {
+    return {
+      commit: context.commit,
+      analyzedAt: new Date().toISOString(),
+      fileCount: context.files.length,
+      totalAdditions: context.totalAdditions,
+      totalDeletions: context.totalDeletions,
+      ai: { provider: "fallback", used: false, reason: "분석 가능한 실행 흐름이 부족합니다." },
+      contextFiles: keyFiles,
+      evidenceSnippets: context.evidenceSnippets,
+      report: {
+        oneLineSummary: `${context.commit.shortSha} 커밋에서 질문으로 검증할 만한 substantive diff 근거가 충분하지 않습니다.`,
+        changeIntent: "문서, 바이너리, patch unavailable, 상수-only 변경만으로는 변경 의도를 코드 흐름 기준으로 평가하지 않습니다.",
+        impactScope: ["실행 함수, handler, service, 검증/변환 흐름이 포함된 diff를 분석해주세요."],
+        riskAreas: ["분석 가능한 실행 흐름이 부족해 리뷰 위험 문항을 생성하지 않았습니다."],
+        testSuggestions: ["substantive code diff가 있는 커밋으로 다시 분석해주세요."],
+        changedFiles: keyFiles
+      },
+      questions: []
+    };
+  }
+  const questionCount = Math.min(4, questionEvidence.length);
+  const selectedEvidence = questionEvidence.slice(0, questionCount);
+  const fallbackEvidence = [...selectedEvidence, ...Array(4).fill(selectedEvidence.at(-1))].slice(0, 4) as CodeEvidence[];
+  const [firstPath, secondPath, thirdPath, fourthPath] = fallbackEvidence.map((snippet) => snippet.path);
 
   return {
     commit: context.commit,
@@ -70,36 +87,36 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
       testSuggestions: ["변경된 기능의 정상 흐름과 예외 흐름을 함께 검증하세요."],
       changedFiles: keyFiles
     },
-    questions: [
+    questions: compactQuestions([
       {
         id: "q1",
-        type: "변경 의도",
+        type: "변경 의도" as const,
         question: `${firstPath} 변경은 어떤 문제를 해결하려는 의도인가요?`,
         relatedFiles: [firstPath],
         evidenceSnippets: compactEvidenceList([fallbackEvidence[0]])
       },
       {
         id: "q2",
-        type: "변경 영향도",
+        type: "변경 영향도" as const,
         question: `${secondPath} 변경이 연결된 기능이나 모듈에 어떤 영향을 줄 수 있나요?`,
         relatedFiles: [secondPath],
         evidenceSnippets: compactEvidenceList([fallbackEvidence[1]])
       },
       {
         id: "q3",
-        type: "테스트/리스크",
+        type: "테스트/리스크" as const,
         question: `${thirdPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`,
         relatedFiles: [thirdPath],
         evidenceSnippets: compactEvidenceList([fallbackEvidence[2]])
       },
       {
         id: "q4",
-        type: "리뷰형",
-        question: `코드 리뷰에서 ${fourthPath} 변경의 책임 분리, 예외 처리, 회귀 위험 중 무엇을 질문받을 수 있나요?`,
+        type: "리뷰형" as const,
+        question: `코드 리뷰에서 ${fourthPath} 변경의 구현 의도와 선택한 구현 방식을 어떻게 설명하겠습니까?`,
         relatedFiles: [fourthPath],
         evidenceSnippets: compactEvidenceList([fallbackEvidence[3]])
       }
-    ]
+    ].slice(0, questionCount))
   };
 }
 
@@ -132,8 +149,8 @@ function truncateDiffExcerpt(content: string, limit: number): string {
 function buildCommitEvidenceSnippets(files: CommitFileChange[]): CodeEvidence[] {
   const snippets = files.flatMap((file) => {
     const hunks = splitPatchHunks(file);
-    return hunks.length ? hunks.map((hunk) => toCodeEvidence(file, hunk)) : [toCodeEvidence(file, null)];
-  });
+    return hunks.map((hunk) => toCodeEvidence(file, hunk));
+  }).filter((snippet) => snippet.quality !== "weak");
 
   return snippets.sort((a, b) => scoreCommitFileByPath(b.path, b.excerpt) - scoreCommitFileByPath(a.path, a.excerpt)).slice(0, MAX_EVIDENCE_SNIPPETS);
 }
@@ -143,14 +160,56 @@ function toCodeEvidence(
   hunk: { index: number; header: string; excerpt: string } | null
 ): CodeEvidence {
   const header = hunk?.header ?? "patch unavailable";
+  const excerpt = hunk?.excerpt ?? fallbackEvidenceExcerpt(file);
   return {
     id: `${sanitizeEvidenceId(file.path)}:${hunk?.index ?? 0}`,
     path: file.path,
     title: `${file.path} ${header}`,
     reason: inferCommitFileReason(file),
-    excerpt: hunk?.excerpt ?? fallbackEvidenceExcerpt(file),
-    kind: file.status
+    excerpt,
+    kind: file.status,
+    quality: classifyCommitEvidence(file.path, header, excerpt)
   };
+}
+
+function classifyCommitEvidence(path: string, header: string, excerpt: string): "strong" | "conditional" | "weak" {
+  if (!excerpt.trim() || header === "patch unavailable" || excerpt.includes("patch를 제공하지 않는 파일")) return "weak";
+  if (/\.(md|mdx|txt|png|jpe?g|gif|svg|ico|lock)$/i.test(path)) return "weak";
+  const changedLines = excerpt
+    .split("\n")
+    .filter((line) => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line))
+    .map((line) => line.slice(1).trim())
+    .join("\n");
+  const meaningful = stripDiffNoise(changedLines);
+  if (!meaningful.trim()) return "weak";
+  if (isConstantOnlyChange(meaningful)) return "conditional";
+  return hasSubstantiveDiffFlow(meaningful) ? "strong" : "conditional";
+}
+
+function stripDiffNoise(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(#|\/\/|\/\*|\*)/.test(line))
+    .filter((line) => !/^(import|from\s+\S+\s+import|export\s+\{)/.test(line))
+    .join("\n");
+}
+
+function isConstantOnlyChange(text: string): boolean {
+  return /^(?:(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*[^;\n]+;?\s*)+$/.test(text.trim());
+}
+
+function hasSubstantiveDiffFlow(text: string): boolean {
+  return /\b(function|def|class|async|await|return|if|elif|else|for|while|try|except|catch|throw|raise|with|yield)\b/.test(text)
+    && /\w+\s*\(|return\s+|=>|request\.|response\.|fetch|query|save|create|update|delete|find|parse|validate/i.test(text);
+}
+
+function strongCommitEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
+  return snippets.filter((snippet) => snippet.quality === "strong");
+}
+
+function compactQuestions<T extends { evidenceSnippets?: CodeEvidence[] }>(questions: T[]): T[] {
+  return questions.filter((question) => question.evidenceSnippets?.length);
 }
 
 function fallbackEvidenceExcerpt(file: CommitFileChange): string {

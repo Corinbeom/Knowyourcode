@@ -36,7 +36,7 @@ export default function CommitResultPage() {
   const answerMap = useMemo(() => new Map(answers.map((answer) => [answer.questionId, answer.answer])), [answers]);
 
   if (!analysis || !evaluation) return null;
-  const questionScores = evaluation.questionEvaluations.map((item) => item.score);
+  const questionScores = gradedEvaluations(evaluation).map((item) => item.score);
   const averageLevel = scoreLevel(averageDisplayScore(questionScores, evaluation.averageScore));
 
   return (
@@ -66,7 +66,7 @@ export default function CommitResultPage() {
               </div>
             </div>
             <div className="result-score">
-              <strong>{averageLevel.label}</strong>
+              <strong>{questionScores.length ? averageLevel.label : "평가 제외"}</strong>
               <span>종합 이해도</span>
             </div>
           </div>
@@ -142,7 +142,7 @@ function CommitQuizResultView({
   const selectedEvaluation = evaluation.questionEvaluations[selectedIndex] ?? evaluation.questionEvaluations[0];
   const selectedQuestion = analysis.questions.find((candidate) => candidate.id === selectedEvaluation?.questionId);
   const questionCount = evaluation.questionEvaluations.length;
-  const questionScores = evaluation.questionEvaluations.map((item) => item.score);
+  const questionScores = gradedEvaluations(evaluation).map((item) => item.score);
 
   function moveQuestion(direction: -1 | 1) {
     setSelectedIndex((current) => {
@@ -171,7 +171,7 @@ function CommitQuizResultView({
         {evaluation.questionEvaluations.map((item, index) => (
           <button key={item.questionId} type="button" className={index === selectedIndex ? "is-active" : ""} onClick={() => setSelectedIndex(index)}>
             <span>Q{index + 1}</span>
-            <strong>{scoreLevel(displayScore(item.score, questionScores)).shortLabel}</strong>
+            <strong>{isInvalidEvaluation(item) ? "제외" : scoreLevel(displayScore(item.score, questionScores)).shortLabel}</strong>
           </button>
         ))}
       </div>
@@ -211,6 +211,7 @@ function QuestionResultCard({
   questionScores: number[];
 }) {
   const level = scoreLevel(displayScore(evaluation.score, questionScores));
+  const invalid = isInvalidEvaluation(evaluation);
   return (
     <article className="question-result-card">
       <div className="question-result-card__header">
@@ -219,9 +220,10 @@ function QuestionResultCard({
           <h4>{question}</h4>
         </div>
         <div className="question-result-card__score">
-          <strong>{level.label}</strong>
+          <strong>{invalid ? "평가 제외" : level.label}</strong>
         </div>
       </div>
+      {invalid ? <p className="notice">{evaluation.invalidReason || "문항 근거가 유효하지 않아 평균에서 제외했습니다."}</p> : null}
       <div className="answer-review">
         <h5>내 답변</h5>
         <p>{answer}</p>
@@ -231,6 +233,12 @@ function QuestionResultCard({
         <InfoBlock title="부족한 부분" items={evaluation.missing} />
         <InfoBlock title="잘못 설명한 부분" items={evaluation.incorrect.length ? evaluation.incorrect : ["명확한 오류는 감지되지 않았습니다."]} />
         <InfoBlock title="다시 볼 코드" items={evaluation.reviewCode} />
+        {evaluation.evidenceReferences?.length ? (
+          <InfoBlock
+            title="평가 근거"
+            items={evaluation.evidenceReferences.map((item) => `${item.path}${item.scope ? ` · ${item.scope}` : ""}: ${item.finding}`)}
+          />
+        ) : null}
         <article className="wide">
           <h3>더 좋은 답변 예시</h3>
           <p>{evaluation.betterAnswer}</p>
@@ -256,7 +264,7 @@ function ResultOverviewCard({ eyebrow, title, description }: { eyebrow: string; 
 
 function weakestQuestionTitle(analysis: CommitAnalysisResult, evaluation: QuizEvaluationResult): string {
   const weakest = findWeakestQuestion(analysis, evaluation);
-  const scores = evaluation.questionEvaluations.map((item) => item.score);
+  const scores = gradedEvaluations(evaluation).map((item) => item.score);
   return weakest ? `${weakest.type} · ${scoreLevel(displayScore(weakest.score, scores)).label}` : "문항 없음";
 }
 
@@ -265,7 +273,7 @@ function weakestQuestionDescription(analysis: CommitAnalysisResult, evaluation: 
 }
 
 function findWeakestQuestion(analysis: CommitAnalysisResult, evaluation: QuizEvaluationResult): { type: string; question: string; score: number } | null {
-  const weakest = [...evaluation.questionEvaluations].sort((a, b) => a.score - b.score)[0];
+  const weakest = [...gradedEvaluations(evaluation)].sort((a, b) => a.score - b.score)[0];
   if (!weakest) return null;
   const question = analysis.questions.find((candidate) => candidate.id === weakest.questionId);
   if (!question) return null;
@@ -274,6 +282,14 @@ function findWeakestQuestion(analysis: CommitAnalysisResult, evaluation: QuizEva
     question: question.question,
     score: weakest.score
   };
+}
+
+function gradedEvaluations(evaluation: QuizEvaluationResult): QuestionEvaluation[] {
+  return evaluation.questionEvaluations.filter((item) => !isInvalidEvaluation(item));
+}
+
+function isInvalidEvaluation(item: QuestionEvaluation): boolean {
+  return item.evaluationStatus === "invalid_question";
 }
 
 function shortListTitle(items: string[], fallback: string): string {

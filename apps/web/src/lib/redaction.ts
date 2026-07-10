@@ -20,7 +20,7 @@ const SENSITIVE_FILE_PATTERNS = [
 
 const SENSITIVE_NAME_PATTERN =
   String.raw`(?:[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CLIENT[_-]?SECRET|AUTH[_-]?SECRET)[A-Z0-9_]*)`;
-const SECRET_VALUE_PATTERN = String.raw`(?:"[^"\n]*"|'[^'\n]*'|` + "`" + String.raw`[^` + "`" + String.raw`\n]*` + "`" + String.raw`|[A-Za-z0-9_./:@+=-]{3,})`;
+const SECRET_VALUE_PATTERN = String.raw`(?:"[^"\n]*"|'[^'\n]*'|` + "`" + String.raw`[^` + "`" + String.raw`\n]*` + "`" + String.raw`|[A-Za-z0-9_./:@+=-]{3,}(?=\s*(?:[,}\]]|$|#|//)))`;
 
 const PRIVATE_KEY_PATTERN = /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----/g;
 const AUTHORIZATION_PATTERN = /\b(Authorization\s*[:=]\s*)(Bearer|Basic)\s+["']?[^"'\s]+["']?/gi;

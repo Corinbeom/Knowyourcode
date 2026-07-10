@@ -123,7 +123,7 @@ export default function StartPage() {
               selected={mode}
               title="Project Mode"
               description="포트폴리오, MVP, 새 코드베이스처럼 전체 구조를 설명해야 할 때 사용합니다."
-              meta="질문 5개 · 구조/흐름/영향도"
+              meta="질문 3~5개 · 구조/흐름/영향도"
               onSelect={selectMode}
             />
             <ModeCard
@@ -131,7 +131,7 @@ export default function StartPage() {
               selected={mode}
               title="Commit Mode"
               description="실무 코드리뷰처럼 이번 변경의 의도와 영향 범위를 설명해야 할 때 사용합니다."
-              meta="질문 4개 · 변경 의도/리스크"
+              meta="질문 2~4개 · 변경 의도/리스크"
               onSelect={selectMode}
             />
             <SecurityOnboarding />

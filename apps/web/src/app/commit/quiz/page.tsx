@@ -356,7 +356,8 @@ function snippetButtonLabel(snippet: CodeEvidence, snippets: CodeEvidence[], ind
 function shortPathLabel(path: string): string {
   const normalized = path.trim();
   const parts = normalized.split("/").filter(Boolean);
-  return parts.at(-1) ?? normalized;
+  if (parts.length <= 1) return parts[0] ?? normalized;
+  return `${parts.at(-2)}/${parts.at(-1)}`;
 }
 
 function replaceAll(value: string, search: string, replacement: string): string {

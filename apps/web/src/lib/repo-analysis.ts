@@ -10,7 +10,8 @@ const PRIORITY_PATTERNS = [
 ];
 const MAX_EXCERPT_LENGTH = 1_600;
 const MAX_EVIDENCE_SNIPPETS = 24;
-const MAX_REPO_SNIPPET_LENGTH = 1_200;
+const MAX_REPO_SNIPPET_LENGTH = 2_400;
+const MIN_PROJECT_QUESTIONS = 3;
 const SECTION_EXCERPT_LENGTH = 360;
 const SYMBOL_CONTEXT_LENGTH = 420;
 const MAX_SYMBOL_SNIPPETS = 2;
@@ -60,18 +61,51 @@ export function buildFallbackAnalysis(
   const stack = inferStack(packageInfo, contextFiles);
   const keyFiles = contextFiles.slice(0, 6);
   const signals = extractCodeSignals(contextFiles, focus);
-  const requestEvidence = pickEvidenceByCapability(evidenceSnippets, supportsRequestOrServiceEvidence, ["entry", "service"], 3);
-  const dataEvidence = pickEvidenceByCapability(evidenceSnippets, supportsDataFlowEvidence, ["data", "service", "entry"], 3);
+  const questionEvidence = strongRepoEvidence(evidenceSnippets);
+  if (questionEvidence.length < MIN_PROJECT_QUESTIONS) {
+    return {
+      repo,
+      analyzedAt: new Date().toISOString(),
+      fileCount,
+      focus,
+      questionLevel,
+      questionTypes,
+      questionTargets,
+      ai: { provider: "fallback", used: false, reason: "분석 가능한 실행 흐름이 부족합니다." },
+      contextFiles,
+      evidenceSnippets,
+      report: {
+        oneLineSummary: `${repo.repo} 저장소에서 질문으로 검증할 만한 실행 코드 근거가 충분하지 않습니다.`,
+        techStack: stack,
+        folderStructure: tree.slice(0, 12),
+        coreFeatures: ["강한 실행 흐름 evidence가 부족해 코드 이해도 문항을 생성하지 않았습니다."],
+        requestFlow: "라우트, handler, service처럼 호출/조건/반환이 드러나는 실행 흐름을 찾지 못했습니다.",
+        dataFlow: "검증, 변환, 조회, 저장처럼 실제 코드 흐름으로 연결된 근거가 부족합니다.",
+        keyFiles,
+        difficulty: "어려움",
+        riskyQuestions: ["분석 가능한 실행 흐름이 있는 소스 파일을 포함해 다시 분석해주세요."]
+      },
+      questions: []
+    };
+  }
+  const questionCount = Math.min(5, questionEvidence.length);
+  const requestEvidence = connectedRequestEvidence(
+    pickEvidenceByCapability(questionEvidence, supportsRequestOrServiceEvidence, ["entry", "service"], 3)
+  );
+  if (!requestEvidence.length) requestEvidence.push(...questionEvidence.slice(0, 1));
+  const dataEvidence = pickEvidenceByCapability(questionEvidence, supportsDataFlowEvidence, ["data", "service", "entry"], 3);
+  if (!dataEvidence.length) dataEvidence.push(...questionEvidence.slice(0, 2));
   const requestFiles = evidencePaths(requestEvidence);
-  if (!requestFiles.length) requestFiles.push(...pickSummaryFiles(contextFiles, ["entry", "service"], 2).map((file) => file.path));
-  const structureFile = pickStructureSummaryFile(contextFiles, requestFiles)?.path ?? signals[0]?.path ?? keyFiles[0]?.path ?? "핵심 파일";
+  const structureCandidate = questionEvidence.find((snippet) => ["entry", "service", "ui"].includes(snippet.kind)) ?? questionEvidence[0];
+  const structureFile = structureCandidate.path;
   const dataFiles = evidencePaths(dataEvidence);
-  if (!dataFiles.length) dataFiles.push(...pickSummaryFiles(contextFiles, ["data", "service"], 2).map((file) => file.path));
-  const impactFiles = pickSummaryFiles(contextFiles, ["service", "ui", "entry", "config"], 2).map((file) => file.path);
-  const interviewFiles = pickSummaryFiles(contextFiles, ["entry", "service", "data", "config"], 2).map((file) => file.path);
+  const impactEvidence = connectedRequestEvidence(sortEvidenceByLayer(questionEvidence, ["service", "entry", "data", "ui", "other"]).slice(0, 2));
+  const interviewEvidence = sortEvidenceByLayer(questionEvidence, ["entry", "service", "data", "ui", "other"]).slice(0, 2);
+  const impactFiles = evidencePaths(impactEvidence);
+  const interviewFiles = evidencePaths(interviewEvidence);
   const secondaryFile = requestFiles[0] ?? keyFiles[1]?.path ?? structureFile;
   const dataFile = dataFiles[0] ?? structureFile;
-  const structureEvidence = compactEvidenceList([pickEvidenceForPath(evidenceSnippets, structureFile)]);
+  const structureEvidence = compactEvidenceList([structureCandidate]);
   const structureSubject = structureEvidence[0] ? fallbackQuestionSubject(structureEvidence[0]) : `${structureFile}의 코드 조각`;
 
   return {
@@ -104,43 +138,43 @@ export function buildFallbackAnalysis(
         "README에 적힌 기술 스택이 실제 코드에서 어디에 사용되나요?"
       ]
     },
-    questions: [
+    questions: compactQuestions([
       {
         id: "q1",
         type: questionTypes[0] ?? "구조 이해",
-        question: `${structureSubject}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?`,
+        question: `${withKoreanParticle(structureSubject, "은", "는")} 선택된 코드 흐름에서 어떤 역할을 담당하나요?`,
         relatedFiles: [structureFile],
         evidenceSnippets: structureEvidence
       },
       {
         id: "q2",
         type: questionTypes[1 % questionTypes.length] ?? "요청 흐름",
-        question: `${secondaryFile}에서 시작되는 요청 또는 화면 흐름이 어떤 파일들과 연결되는지 설명해주세요.`,
+        question: `${withKoreanParticle(secondaryFile, "을", "를")} 포함한 요청 또는 화면 흐름이 어떤 파일들과 연결되는지 설명해주세요.`,
         relatedFiles: requestFiles.length ? requestFiles : [secondaryFile],
-        evidenceSnippets: compactEvidenceList(requestEvidence.length ? requestEvidence : (requestFiles.length ? requestFiles : [secondaryFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
+        evidenceSnippets: compactEvidenceList(requestEvidence)
       },
       {
         id: "q3",
         type: questionTypes[2 % questionTypes.length] ?? "데이터 흐름",
         question: `${dataFile}에서 데이터 입력, 검증, 조회 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.`,
         relatedFiles: dataFiles.length ? dataFiles : [structureFile],
-        evidenceSnippets: compactEvidenceList(dataEvidence.length ? dataEvidence : (dataFiles.length ? dataFiles : [structureFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
+        evidenceSnippets: compactEvidenceList(dataEvidence)
       },
       {
         id: "q4",
         type: questionTypes[3 % questionTypes.length] ?? "변경 영향도",
         question: `${structureFile}의 동작을 수정한다면 어떤 영향 범위를 함께 확인해야 하나요?`,
         relatedFiles: impactFiles.length ? impactFiles : [structureFile],
-        evidenceSnippets: compactEvidenceList((impactFiles.length ? impactFiles : [structureFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
+        evidenceSnippets: compactEvidenceList(impactEvidence)
       },
       {
         id: "q5",
         type: questionTypes[4 % questionTypes.length] ?? "면접형",
-        question: `면접이나 코드리뷰에서 ${secondaryFile}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`,
+        question: `면접이나 코드리뷰에서 ${withKoreanParticle(secondaryFile, "을", "를")} 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`,
         relatedFiles: interviewFiles.length ? interviewFiles : [secondaryFile],
-        evidenceSnippets: compactEvidenceList((interviewFiles.length ? interviewFiles : [secondaryFile]).map((path) => pickEvidenceForPath(evidenceSnippets, path)))
+        evidenceSnippets: compactEvidenceList(interviewEvidence)
       }
-    ]
+    ].slice(0, questionCount))
   };
 }
 
@@ -155,17 +189,23 @@ function fallbackQuestionSubject(snippet: CodeEvidence): string {
   return `${snippet.path}의 ${scope} 코드`;
 }
 
+function withKoreanParticle(value: string, consonantParticle: string, vowelParticle: string): string {
+  const trimmed = value.trimEnd();
+  const last = trimmed.at(-1);
+  if (!last) return value;
+  const code = last.charCodeAt(0);
+  const hasFinalConsonant = code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0;
+  return `${trimmed}${hasFinalConsonant ? consonantParticle : vowelParticle}`;
+}
+
 function buildRepoEvidenceSnippets(files: SourceFile[], focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
-  const guaranteed: CodeEvidence[] = [];
-  const extras: CodeEvidence[] = [];
+  const snippets: CodeEvidence[] = [];
 
   for (const file of files) {
-    const snippets = toRepoFileEvidence(file, focus, questionTargets);
-    if (snippets[0]) guaranteed.push(snippets[0]);
-    extras.push(...snippets.slice(1));
+    snippets.push(...toRepoFileEvidence(file, focus, questionTargets));
   }
 
-  return dedupeEvidence([...guaranteed, ...extras.sort((a, b) => scoreRepoEvidence(b) - scoreRepoEvidence(a))]).slice(0, Math.max(MAX_EVIDENCE_SNIPPETS, guaranteed.length));
+  return dedupeEvidence(snippets.sort((a, b) => scoreRepoEvidence(b) - scoreRepoEvidence(a))).slice(0, MAX_EVIDENCE_SNIPPETS);
 }
 
 function toRepoFileEvidence(file: SourceFile, focus: AnalysisFocus, questionTargets: string[]): CodeEvidence[] {
@@ -174,18 +214,80 @@ function toRepoFileEvidence(file: SourceFile, focus: AnalysisFocus, questionTarg
     ...extractSymbolChunks(content).slice(0, 3),
     ...extractKeywordChunks(content, file.path).slice(0, 3)
   ], file.path);
-  const chunks: Array<{ title: string; excerpt: string }> = codeChunks.some((chunk) => chunk.excerpt.trim())
-    ? codeChunks
-    : [{ title: "file overview", excerpt: sliceAround(content, 0, MAX_REPO_SNIPPET_LENGTH) }];
+  const chunks: Array<{ title: string; excerpt: string }> = codeChunks;
 
-  return chunks.filter((chunk) => chunk.excerpt.trim()).map((chunk, index) => ({
-    id: `${sanitizeEvidenceId(file.path)}:${index}`,
-    path: file.path,
-    title: `${file.path} · ${chunk.title}`,
-    reason: inferEvidenceReason(file.path, chunk.title, chunk.excerpt),
-    excerpt: chunk.excerpt.slice(0, MAX_REPO_SNIPPET_LENGTH),
-    kind: fileLayer(file.path)
-  }));
+  return chunks
+    .filter((chunk) => chunk.excerpt.trim())
+    .map((chunk, index) => {
+      const quality = classifyRepoEvidence(file.path, chunk.title, chunk.excerpt);
+      return {
+        id: `${sanitizeEvidenceId(file.path)}:${index}`,
+        path: file.path,
+        title: `${file.path} · ${chunk.title}`,
+        reason: inferEvidenceReason(file.path, chunk.title, chunk.excerpt),
+        excerpt: chunk.excerpt.slice(0, MAX_REPO_SNIPPET_LENGTH),
+        kind: fileLayer(file.path),
+        quality
+      };
+    })
+    .filter((snippet) => snippet.quality !== "weak");
+}
+
+function classifyRepoEvidence(path: string, title: string, excerpt: string): "strong" | "conditional" | "weak" {
+  const text = stripCommentsAndImports(excerpt);
+  if (!text.trim()) return "weak";
+  if (title === "file overview" || isDocOnlyPath(path)) return "weak";
+  if (isConstantOnlyScope(title, text) || isNonExecutableConstantSymbol(title, text)) return "conditional";
+  if (isContractLikePath(path) && !hasExecutableFlow(text)) return "conditional";
+  if (hasExecutableFlow(text)) return "strong";
+  return /\b(class|interface|type|schema|model|config|settings)\b/i.test(text) ? "conditional" : "weak";
+}
+
+function stripCommentsAndImports(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(#|\/\/|\/\*|\*|<!--)/.test(line))
+    .filter((line) => !/^(import|from\s+\S+\s+import|export\s+\{)/.test(line))
+    .join("\n");
+}
+
+function isDocOnlyPath(path: string): boolean {
+  return /(^|\/)(README|CHANGELOG|LICENSE|CONTRIBUTING)(\.[A-Za-z0-9]+)?$|\.mdx?$/i.test(path);
+}
+
+function isConstantOnlyScope(title: string, text: string): boolean {
+  if (/^(runtime|dynamic|revalidate|preferredRegion|maxDuration|fetchCache|configuration)$/.test(title)) return true;
+  return /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*[\s\S]+;?$/.test(text.trim());
+}
+
+function isNonExecutableConstantSymbol(title: string, text: string): boolean {
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const declaration = text.match(new RegExp(`(?:export\\s+)?(?:const|let|var)\\s+${escapedTitle}\\s*=\\s*([^\\n;]+)`));
+  if (!declaration) return false;
+  const initializer = declaration[1] ?? "";
+  return !initializer.includes("=>") && !/\bfunction\b/.test(initializer);
+}
+
+function sortEvidenceByLayer(snippets: CodeEvidence[], layers: string[]): CodeEvidence[] {
+  return [...snippets].sort((left, right) => {
+    const leftIndex = layers.includes(left.kind) ? layers.indexOf(left.kind) : layers.length;
+    const rightIndex = layers.includes(right.kind) ? layers.indexOf(right.kind) : layers.length;
+    return leftIndex - rightIndex;
+  });
+}
+
+function hasExecutableFlow(text: string): boolean {
+  return /\b(function|def|class|async|await|return|if|elif|else|for|while|try|except|catch|throw|raise|with|yield)\b/.test(text)
+    && /\w+\s*\(|return\s+|=>|request\.|response\.|fetch|query|save|create|update|delete|find|parse|validate/i.test(text);
+}
+
+function strongRepoEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
+  return snippets.filter((snippet) => snippet.quality === "strong");
+}
+
+function compactQuestions<T extends { evidenceSnippets?: CodeEvidence[] }>(questions: T[]): T[] {
+  return questions.filter((question) => question.evidenceSnippets?.length);
 }
 
 function extractSymbolChunks(content: string): Array<{ title: string; excerpt: string }> {
@@ -208,7 +310,7 @@ function extractSymbolChunks(content: string): Array<{ title: string; excerpt: s
     const key = `${match.index}:${match.title}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    chunks.push({ title: match.title, excerpt: sliceAround(content, match.index, MAX_REPO_SNIPPET_LENGTH) });
+    chunks.push({ title: match.title, excerpt: sliceSymbolForward(content, match.index, MAX_REPO_SNIPPET_LENGTH) });
     if (chunks.length >= 6) break;
   }
   return chunks;
@@ -230,12 +332,22 @@ function extractKeywordChunks(content: string, path: string): Array<{ title: str
   for (const group of keywordGroups) {
     const match = group.pattern.exec(content);
     if (!match || match.index === undefined) continue;
-    const rangeKey = Math.floor(Math.max(match.index - MAX_REPO_SNIPPET_LENGTH / 2, 0) / 160);
+    const symbolStart = findSymbolStartBefore(content, match.index);
+    const start = symbolStart ?? Math.max(match.index - MAX_REPO_SNIPPET_LENGTH / 2, 0);
+    const rangeKey = Math.floor(start / 160);
     if (seenRanges.has(rangeKey)) continue;
     seenRanges.add(rangeKey);
-    chunks.push({ title: group.title, excerpt: sliceAround(content, match.index, MAX_REPO_SNIPPET_LENGTH) });
+    chunks.push({ title: group.title, excerpt: sliceSymbolForward(content, symbolStart ?? match.index, MAX_REPO_SNIPPET_LENGTH) });
   }
   return chunks;
+}
+
+function findSymbolStartBefore(content: string, index: number): number | undefined {
+  const prefix = content.slice(0, index);
+  const pattern = /^\s*(?:export\s+)?(?:async\s+)?(?:function|def|class)\s+[A-Za-z_][A-Za-z0-9_]*/gm;
+  const arrowPattern = /^\s*(?:export\s+)?(?:const|let|var)\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:async\s+)?(?:\([^\n]*\)|[A-Za-z_][A-Za-z0-9_]*)\s*=>/gm;
+  const matches = [...prefix.matchAll(pattern), ...prefix.matchAll(arrowPattern)].sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
+  return matches.at(-1)?.index;
 }
 
 function rankRepoChunks(chunks: Array<{ title: string; excerpt: string }>, path: string): Array<{ title: string; excerpt: string }> {
@@ -316,6 +428,39 @@ function evidencePaths(snippets: CodeEvidence[]): string[] {
 
 function supportsRequestOrServiceEvidence(snippet: CodeEvidence): boolean {
   return supportsRequestFlowEvidence(snippet) || isRequestHelperEvidence(snippet);
+}
+
+function connectedRequestEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
+  if (snippets.length <= 1) return snippets;
+  const selected = [snippets[0]];
+  const remaining = snippets.slice(1);
+  const connectedTokens = requestConnectionTokens(snippets[0]);
+  while (remaining.length) {
+    const connectedIndex = remaining.findIndex((snippet) => [...requestConnectionTokens(snippet)].some((token) => connectedTokens.has(token)));
+    if (connectedIndex < 0) break;
+    const [snippet] = remaining.splice(connectedIndex, 1);
+    const tokens = requestConnectionTokens(snippet);
+      selected.push(snippet);
+      tokens.forEach((token) => connectedTokens.add(token));
+  }
+  return selected;
+}
+
+function requestConnectionTokens(snippet: CodeEvidence): Set<string> {
+  const text = `${snippet.title}\n${snippet.excerpt}`;
+  const calls = [...text.matchAll(/\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(/g)].map((match) => match[1].toLowerCase());
+  const routes = [...text.matchAll(/["'](\/[-A-Za-z0-9_/{}/.]{3,})["']/g)].map((match) => match[1].toLowerCase());
+  const imports = [...text.matchAll(/^\s*(?:import|from)\s+.*$/gm)].flatMap((match) => match[0].match(/\b[A-Za-z_][A-Za-z0-9_]{3,}\b/g) ?? []).map((token) => token.toLowerCase());
+  const scope = repoEvidenceScopeTitle(snippet);
+  const stopWords = new Set(["function", "request", "response", "json", "fetch", "return", "str", "int", "list", "dict", "nextresponse", "import", "from"]);
+  const scopeTokens = /^[A-Za-z_][A-Za-z0-9_]{3,}$/.test(scope) ? [scope.toLowerCase()] : [];
+  return new Set([...calls, ...routes, ...imports, ...scopeTokens].filter((token) => !stopWords.has(token)));
+}
+
+function repoEvidenceScopeTitle(snippet: CodeEvidence): string {
+  if (snippet.title.includes("·")) return snippet.title.split("·").at(-1)?.trim() ?? "";
+  if (snippet.path && snippet.title.startsWith(snippet.path)) return snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim();
+  return "";
 }
 
 function supportsRequestFlowEvidence(snippet: CodeEvidence): boolean {
@@ -588,6 +733,25 @@ function sliceAround(content: string, index: number, length: number): string {
   const parts: string[] = [];
   if (start > 0) parts.push(OMITTED_BEFORE_MARKER);
   parts.push(normalized.slice(start, end).replace(/^\n+|\n+$/g, ""));
+  if (end < normalized.length) parts.push(OMITTED_AFTER_MARKER);
+  return parts.join("\n\n");
+}
+
+function sliceSymbolForward(content: string, index: number, length: number): string {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (normalized.length <= length) return normalized;
+
+  const lineStart = normalized.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
+  const markerOverhead = (lineStart > 0 ? OMITTED_BEFORE_MARKER.length + 2 : 0) + OMITTED_AFTER_MARKER.length + 2;
+  let end = Math.min(lineStart + Math.max(120, length - markerOverhead), normalized.length);
+  if (end < normalized.length) {
+    const lineEnd = normalized.lastIndexOf("\n", end);
+    if (lineEnd > lineStart) end = lineEnd;
+  }
+
+  const parts: string[] = [];
+  if (lineStart > 0) parts.push(OMITTED_BEFORE_MARKER);
+  parts.push(normalized.slice(lineStart, end).replace(/^\n+|\n+$/g, ""));
   if (end < normalized.length) parts.push(OMITTED_AFTER_MARKER);
   return parts.join("\n\n");
 }
