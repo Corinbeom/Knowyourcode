@@ -94,6 +94,33 @@ class RepoEvidenceTest(unittest.TestCase):
         self.assertNotIn("· runtime", first["title"])
         self.assertIn("POST handler", analysis["questions"][0]["question"])
 
+    def test_runtime_scope_is_not_accepted_as_request_flow_evidence(self):
+        runtime_evidence = {
+            "id": "route.ts:runtime",
+            "path": "apps/web/src/app/api/analyze-commit/route.ts",
+            "title": "apps/web/src/app/api/analyze-commit/route.ts · runtime",
+            "reason": "요청 처리와 API 연결 흐름",
+            "excerpt": "export const runtime = 'nodejs';\n\nexport async function POST(request: Request) {\n  return proxy(request);\n}",
+            "kind": "entry",
+        }
+        post_evidence = {
+            **runtime_evidence,
+            "id": "route.ts:post",
+            "title": "apps/web/src/app/api/analyze-commit/route.ts · POST",
+        }
+        question = {
+            "id": "q2",
+            "type": "요청 흐름",
+            "question": "route.ts의 POST handler는 인증 후 분석 요청을 어떻게 처리하나요?",
+            "relatedFiles": [runtime_evidence["path"]],
+            "evidenceSnippets": [runtime_evidence],
+        }
+
+        refined = refine_repo_question_evidence([question], [question], [runtime_evidence, post_evidence])
+
+        self.assertEqual(refined[0]["evidenceSnippets"][0]["title"], post_evidence["title"])
+        self.assertNotIn(runtime_evidence, refined[0]["evidenceSnippets"])
+
     def test_repo_first_question_prefers_entry_over_schema_contract(self):
         context = build_repo_static_context(
             sample_repo(),

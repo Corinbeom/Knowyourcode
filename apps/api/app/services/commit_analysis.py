@@ -8,6 +8,7 @@ MAX_CONTEXT_FILES = 12
 MAX_PATCH_EXCERPT = 2400
 MAX_EVIDENCE_SNIPPETS = 18
 MAX_HUNK_EXCERPT = 1800
+OMITTED_AFTER_DIFF_MARKER = "... 이후 변경 내용 생략 ..."
 
 
 def build_commit_static_context(commit_changes: dict) -> dict:
@@ -107,10 +108,22 @@ def split_patch_hunks(file: dict) -> list[dict]:
             {
                 "index": index,
                 "header": header,
-                "excerpt": part[:MAX_HUNK_EXCERPT],
+                "excerpt": truncate_diff_excerpt(part, MAX_HUNK_EXCERPT),
             }
         )
     return hunks
+
+
+def truncate_diff_excerpt(content: str, limit: int) -> str:
+    if len(content) <= limit:
+        return content
+
+    available = max(0, limit - len(OMITTED_AFTER_DIFF_MARKER) - 1)
+    truncated = content[:available]
+    last_newline = truncated.rfind("\n")
+    if last_newline >= 0:
+        truncated = truncated[:last_newline]
+    return f"{truncated.rstrip()}\n{OMITTED_AFTER_DIFF_MARKER}"
 
 
 def build_commit_evidence_snippets(files: list[dict]) -> list[dict]:
@@ -213,7 +226,7 @@ def to_commit_file_summary(file: dict) -> dict:
     return {
         "path": file.get("path") or "unknown",
         "reason": infer_commit_file_reason(file),
-        "excerpt": "\n".join(header_parts) + "\n" + patch[:MAX_PATCH_EXCERPT],
+        "excerpt": "\n".join(header_parts) + "\n" + truncate_diff_excerpt(patch, MAX_PATCH_EXCERPT),
     }
 
 
