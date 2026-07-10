@@ -45,6 +45,12 @@ export async function POST(request: Request) {
     const context = buildCommitStaticContext(commitChanges);
     const fallback = buildFallbackCommitAnalysis(context);
     const analysis = await generateCommitAnalysis(context, fallback);
+    if (!analysis.questions.length) {
+      return NextResponse.json(
+        { error: analysis.ai.reason ?? "분석 가능한 실행 흐름이 부족합니다." },
+        { status: 422 }
+      );
+    }
 
     return NextResponse.json({
       analysis,

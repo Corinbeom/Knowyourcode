@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -28,6 +30,10 @@ class EvaluationResult(BaseModel):
     betterAnswer: str
     interviewAnswerDirection: str
     followUpQuestion: str
+    evaluationStatus: Literal["graded", "invalid_question"] | None = None
+    answerType: Literal["substantive", "insufficient", "question_challenge"] | None = None
+    invalidReason: str | None = None
+    evidenceReferences: list[dict[str, str]] | None = None
 
 
 class QuestionEvaluation(EvaluationResult):

@@ -28,6 +28,7 @@ export type CodeEvidence = {
   reason: string;
   excerpt: string;
   kind: string;
+  quality?: "strong" | "conditional" | "weak";
 };
 
 export type ProjectReport = {
@@ -137,6 +138,10 @@ export type EvaluationResult = {
   betterAnswer: string;
   interviewAnswerDirection: string;
   followUpQuestion: string;
+  evaluationStatus?: "graded" | "invalid_question";
+  answerType?: "substantive" | "insufficient" | "question_challenge";
+  invalidReason?: string;
+  evidenceReferences?: Array<{ path: string; scope: string; finding: string }>;
 };
 
 export type QuizAnswer = {

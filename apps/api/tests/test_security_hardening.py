@@ -25,6 +25,7 @@ class RedactionTest(unittest.TestCase):
                 "password: yaml-secret",
                 "const openAiKey = 'sk-1234567890abcdefghijklmnop';",
                 "Authorization: Bearer super-secret-token",
+                "EVALUATION_OUTPUT_TOKENS = int(os.getenv('EVALUATION_OUTPUT_TOKENS', '1200'))",
                 "-----BEGIN PRIVATE KEY-----",
                 "abc",
                 "-----END PRIVATE KEY-----",
@@ -34,6 +35,7 @@ class RedactionTest(unittest.TestCase):
         redacted = redact_secrets(content)
 
         self.assertIn("const visible = 'ok';", redacted)
+        self.assertIn("int(os.getenv('EVALUATION_OUTPUT_TOKENS', '1200'))", redacted)
         self.assertNotIn("abc123", redacted)
         self.assertNotIn("sk-live-secret", redacted)
         self.assertNotIn("process-secret", redacted)
