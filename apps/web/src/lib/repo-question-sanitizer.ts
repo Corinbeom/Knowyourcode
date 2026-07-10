@@ -28,6 +28,7 @@ function isQuestionAllowed(question: UnderstandingQuestion, allEvidence: CodeEvi
   if (question.type === "요청 흐름") {
     if (primaryPath && (isConfigLikePath(primaryPath) || isContractLikePath(primaryPath)) && hasBetter) return false;
     if (/config\.py의\s*요청\s*처리\s*코드/.test(question.question)) return false;
+    if (snippets.some(isRouteConfigScope)) return false;
     return snippets.some(supportsRequestFlowEvidence) && snippets.some((snippet) => snippet.kind === "entry");
   }
 
@@ -229,9 +230,15 @@ function hasNonMaintenanceEvidence(evidence: CodeEvidence[]): boolean {
 
 function supportsRequestFlowEvidence(snippet: CodeEvidence): boolean {
   const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
+  if (isRouteConfigScope(snippet)) return false;
   if (snippet.kind === "config" && /package\.json|config|env|settings|docker/i.test(snippet.path)) return false;
   return isEntrypointPath(snippet.path)
     || /\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]/i.test(text);
+}
+
+function isRouteConfigScope(snippet: CodeEvidence): boolean {
+  const scope = snippet.title.includes("·") ? snippet.title.split("·").at(-1)?.trim() ?? "" : "";
+  return ["runtime", "dynamic", "revalidate", "preferredRegion", "maxDuration", "fetchCache"].includes(scope);
 }
 
 function isRequestHelperEvidence(snippet: CodeEvidence): boolean {

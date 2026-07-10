@@ -46,6 +46,19 @@ class CommitEvidenceTest(unittest.TestCase):
         self.assertIn("@@ -1,3 +1,4 @@", hunks[0]["header"])
         self.assertIn("return 2", hunks[1]["excerpt"])
 
+    def test_long_patch_hunk_is_truncated_at_line_boundary_with_marker(self):
+        long_line = "+    result = process_commit_context()"
+        file = {
+            "path": "app/service.py",
+            "patch": "@@ -1,80 +1,80 @@\n" + "\n".join([long_line] * 80),
+        }
+
+        hunk = split_patch_hunks(file)[0]
+
+        self.assertTrue(hunk["excerpt"].endswith("... 이후 변경 내용 생략 ..."))
+        self.assertNotIn("process_commit_con\n", hunk["excerpt"])
+        self.assertTrue(all(line == long_line or line.startswith("@@") or "변경 내용 생략" in line for line in hunk["excerpt"].splitlines()))
+
     def test_patchless_file_creates_fallback_evidence(self):
         snippets = build_commit_evidence_snippets(
             [
