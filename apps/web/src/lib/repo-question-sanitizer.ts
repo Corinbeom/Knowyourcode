@@ -19,6 +19,12 @@ function isQuestionAllowed(question: UnderstandingQuestion, allEvidence: CodeEvi
   const primaryPath = firstQuestionPath(question);
   const hasBetter = hasBetterFlowEvidence(allEvidence);
 
+  if (hasExplicitSymbolLabelMismatch(question, allEvidence)) return false;
+
+  if (question.type === "구조 이해" && isOverbroadStructureQuestion(question.question)) {
+    return hasMultiLayerSelectedEvidence(snippets) && !snippets.every(isFileOverviewEvidence);
+  }
+
   if (question.type === "요청 흐름") {
     if (primaryPath && (isConfigLikePath(primaryPath) || isContractLikePath(primaryPath)) && hasBetter) return false;
     if (/config\.py의\s*요청\s*처리\s*코드/.test(question.question)) return false;
@@ -50,8 +56,8 @@ function buildQuestionFromEvidence(question: UnderstandingQuestion, evidence: Co
   const type = question.type;
   const selected = selectEvidenceForType(type, evidence);
   const relatedFiles = evidencePaths(selected);
-  const primaryPath = relatedFiles[0] ?? question.relatedFiles[0] ?? "핵심 파일";
-  const secondaryPath = relatedFiles[1] ?? primaryPath;
+  const primaryPath = selected[0] ? questionSubject(selected[0]) : relatedFiles[0] ?? question.relatedFiles[0] ?? "핵심 파일";
+  const secondaryPath = selected[1] ? questionSubject(selected[1]) : relatedFiles[1] ?? primaryPath;
 
   return {
     id: question.id || `q${index + 1}`,
@@ -65,7 +71,7 @@ function buildQuestionFromEvidence(question: UnderstandingQuestion, evidence: Co
 function selectEvidenceForType(type: QuestionType, evidence: CodeEvidence[]): CodeEvidence[] {
   if (type === "요청 흐름") {
     return selectLayered(
-      evidence.filter((snippet) => !isConfigLikePath(snippet.path) && !isContractLikePath(snippet.path) && (supportsRequestFlowEvidence(snippet) || snippet.kind === "service")),
+      evidence.filter((snippet) => !isConfigLikePath(snippet.path) && !isContractLikePath(snippet.path) && (supportsRequestFlowEvidence(snippet) || isRequestHelperEvidence(snippet))),
       ["entry", "service"],
       3
     );
@@ -98,23 +104,27 @@ function selectEvidenceForType(type: QuestionType, evidence: CodeEvidence[]): Co
       3
     );
   }
-  return selectLayered(evidence, ["entry", "service", "ui", "config"], 1);
+  const structureEvidence = evidence.filter((snippet) => ["entry", "service", "ui"].includes(snippet.kind) && !isContractLikePath(snippet.path) && !isMaintenanceLikePath(snippet.path));
+  return selectLayered(structureEvidence.length ? structureEvidence : evidence, ["entry", "service", "ui", "config"], 2);
 }
 
 function buildQuestionText(type: QuestionType, primaryPath: string, secondaryPath: string): string {
   if (type === "요청 흐름") {
-    return `${primaryPath}의 요청 처리 코드가 ${secondaryPath}와 어떻게 연결되는지 설명해주세요.`;
+    if (primaryPath !== secondaryPath) return `${primaryPath}가 ${secondaryPath}와 어떻게 연결되어 요청을 처리하는지 설명해주세요.`;
+    return `${primaryPath}는 요청 처리에서 어떤 역할을 담당하나요?`;
   }
   if (type === "데이터 흐름") {
     return `${primaryPath}에서 데이터 수집, 검증 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.`;
   }
   if (type === "변경 영향도") {
-    return `${primaryPath}의 동작을 수정할 때 ${secondaryPath}까지 어떤 영향이 이어질 수 있나요?`;
+    if (primaryPath !== secondaryPath) return `${primaryPath}의 동작을 수정할 때 ${secondaryPath}까지 어떤 영향이 이어질 수 있나요?`;
+    return `${primaryPath}의 동작을 수정할 때 이 코드 조각 안에서 어떤 영향 범위를 확인해야 하나요?`;
   }
   if (type === "면접형") {
     return `면접이나 코드리뷰에서 ${primaryPath}의 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`;
   }
-  return `${primaryPath}의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.`;
+  if (primaryPath !== secondaryPath) return `${primaryPath}와 ${secondaryPath}의 역할과 연결 흐름을 설명해주세요.`;
+  return `${primaryPath}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?`;
 }
 
 function selectLayered(evidence: CodeEvidence[], layers: string[], limit: number): CodeEvidence[] {
@@ -131,6 +141,34 @@ function selectLayered(evidence: CodeEvidence[], layers: string[], limit: number
   return selected;
 }
 
+function isOverbroadStructureQuestion(question: string): boolean {
+  return /(이\s*)?프로젝트의?\s*(주요|전체)?\s*(구조|폴더\s*구조|실행\s*진입점)|주요\s*폴더\s*구조/.test(question);
+}
+
+function hasMultiLayerSelectedEvidence(snippets: CodeEvidence[]): boolean {
+  const layers = new Set(snippets.map((snippet) => snippet.kind).filter((kind) => ["entry", "service", "data", "ui", "config"].includes(kind)));
+  const paths = new Set(snippets.map((snippet) => snippet.path).filter(Boolean));
+  return layers.size >= 2 && paths.size >= 2;
+}
+
+function isFileOverviewEvidence(snippet: CodeEvidence): boolean {
+  return snippet.title.includes("file overview");
+}
+
+function questionSubject(snippet: CodeEvidence): string {
+  const scope = evidenceScopeTitle(snippet);
+  if (!scope || scope === "file overview") return `${snippet.path}의 코드 조각`;
+  if (/^(GET|POST|PUT|PATCH|DELETE)$/.test(scope)) return `${snippet.path}의 ${scope} handler`;
+  if (["request flow", "data flow", "error handling", "configuration"].includes(scope)) return `${snippet.path}의 ${scope} 코드 조각`;
+  return `${snippet.path}의 ${scope} 코드`;
+}
+
+function evidenceScopeTitle(snippet: CodeEvidence): string {
+  if (snippet.title.includes("·")) return snippet.title.split("·").at(-1)?.trim() ?? "";
+  if (snippet.path && snippet.title.startsWith(snippet.path)) return snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim();
+  return snippet.title.trim();
+}
+
 function firstQuestionPath(question: UnderstandingQuestion): string | undefined {
   return extractQuestionPaths(question.question)[0] ?? question.relatedFiles[0];
 }
@@ -138,6 +176,35 @@ function firstQuestionPath(question: UnderstandingQuestion): string | undefined 
 function extractQuestionPaths(text: string): string[] {
   const matches = text.match(/(?:apps?|src|lib|pages|components|api|app|server|client|tests?)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+|[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|py|java|kt|go|rs|json|yml|yaml)/g);
   return [...new Set(matches ?? [])];
+}
+
+function hasExplicitSymbolLabelMismatch(question: UnderstandingQuestion, allEvidence: CodeEvidence[]): boolean {
+  const symbols = extractQuestionSymbols(question.question);
+  if (!symbols.length) return false;
+  const snippets = question.evidenceSnippets ?? [];
+  return symbols.some((symbol) =>
+    !snippets.some((snippet) => symbolInTitle(snippet, symbol))
+    && allEvidence.some((snippet) => symbolInTitle(snippet, symbol))
+  );
+}
+
+function extractQuestionSymbols(text: string): string[] {
+  const pathParts = new Set(extractQuestionPaths(text).flatMap((path) => path.split(/[/._-]+/).filter((part) => part.length >= 3).map((part) => part.toLowerCase())));
+  const candidates = text.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+  return [...new Set(candidates.filter((candidate) => {
+    const lowered = candidate.toLowerCase();
+    if (["GET", "POST", "PUT", "PATCH", "DELETE", "HTTP", "API", "URL"].includes(candidate)) return false;
+    if (pathParts.has(lowered)) return false;
+    return candidate.includes("_") || /[a-z][A-Z]/.test(candidate);
+  }))].slice(0, 5);
+}
+
+function symbolInTitle(snippet: CodeEvidence, symbol: string): boolean {
+  return new RegExp(`(^|[^\\w])${escapeRegExp(symbol)}($|[^\\w])`).test(snippet.title);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function evidencePaths(evidence: CodeEvidence[]): string[] {
@@ -164,7 +231,14 @@ function supportsRequestFlowEvidence(snippet: CodeEvidence): boolean {
   const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
   if (snippet.kind === "config" && /package\.json|config|env|settings|docker/i.test(snippet.path)) return false;
   return isEntrypointPath(snippet.path)
-    || /\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b/i.test(text);
+    || /\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]/i.test(text);
+}
+
+function isRequestHelperEvidence(snippet: CodeEvidence): boolean {
+  if (snippet.kind !== "service") return false;
+  const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
+  if (/\bdocs?_enabled|openapi|redoc|swagger|cors|allowed_origins\b/i.test(text)) return false;
+  return /\b(parse\w*|validate\w*|fetch\w*|build\w*|analyze\w*|evaluate\w*|create\w*|update\w*|delete\w*|request\.json|urlparse|urlopen|axios)\b/i.test(text);
 }
 
 function isEntrypointPath(path: string): boolean {

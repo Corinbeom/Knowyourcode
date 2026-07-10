@@ -182,7 +182,7 @@ export default function QuizPage() {
                 {questionDisplay.paths.length ? (
                   <div className="quiz-question__context" aria-label="질문 관련 파일">
                     {questionDisplay.paths.map((path) => (
-                      <span key={path}>{path}</span>
+                      <span key={path.key}>{path.label}</span>
                     ))}
                   </div>
                 ) : null}
@@ -193,7 +193,7 @@ export default function QuizPage() {
                 <p className="section-label">관련 파일</p>
                 <ul>
                   {relatedSnippets.map((snippet, index) => (
-                    <li key={snippet.id}>
+                    <li key={snippetKey(snippet, index)}>
                       <button
                         type="button"
                         className={selectedSnippet?.id === snippet.id ? "is-active" : ""}
@@ -315,6 +315,7 @@ function CodeExcerpt({ excerpt }: { excerpt: string }) {
 }
 
 function codeLineClass(line: string): string {
+  if (line.includes("이전 코드 생략") || line.includes("이후 코드 생략")) return "is-omitted";
   if (line.startsWith("@@")) return "is-hunk";
   if (line.startsWith("+") && !line.startsWith("+++")) return "is-added";
   if (line.startsWith("-") && !line.startsWith("---")) return "is-removed";
@@ -327,7 +328,7 @@ function getRelatedSnippets(
   relatedFiles: string[]
 ) : CodeEvidence[] {
   if (evidenceSnippets?.length) {
-    return [...new Map(evidenceSnippets.map((snippet) => [snippet.id, snippet])).values()].slice(0, 3);
+    return dedupeSnippets(evidenceSnippets).slice(0, 3);
   }
 
   const snippets: CodeEvidence[] = relatedFiles.map((path) => {
@@ -343,10 +344,10 @@ function getRelatedSnippets(
     };
   });
 
-  return [...new Map(snippets.map((file) => [file.path, file])).values()].slice(0, 3);
+  return dedupeSnippets(snippets).slice(0, 3);
 }
 
-function buildQuestionDisplay(question: string, snippets: CodeEvidence[]): { question: string; paths: string[] } {
+function buildQuestionDisplay(question: string, snippets: CodeEvidence[]): { question: string; paths: Array<{ key: string; label: string }> } {
   const paths = [...new Set(snippets.map((snippet) => snippet.path).filter(Boolean))]
     .filter((path) => path.includes("/") || path.includes("."))
     .slice(0, 3);
@@ -358,16 +359,67 @@ function buildQuestionDisplay(question: string, snippets: CodeEvidence[]): { que
 
   return {
     question: displayQuestion,
-    paths: paths.map((path) => shortPathLabel(path))
+    paths: paths.map((path) => ({
+      key: path,
+      label: chipPathLabel(path, paths)
+    }))
   };
 }
 
+function chipPathLabel(path: string, paths: string[]): string {
+  const short = shortPathLabel(path);
+  const duplicateCount = paths.filter((item) => shortPathLabel(item) === short).length;
+  return duplicateCount > 1 ? disambiguatedPathLabel(path) : short;
+}
+
 function snippetButtonLabel(snippet: CodeEvidence, snippets: CodeEvidence[], index: number): string {
-  const base = shortPathLabel(snippet.path || snippet.title || "관련 파일");
-  const duplicateCount = snippets.filter((item) => item.path === snippet.path).length;
-  if (duplicateCount <= 1) return base;
+  const scope = snippetScopeLabel(snippet);
+  const base = pathLabelForSnippets(snippet.path || snippet.title || "관련 파일", scope, snippets);
+  const duplicateCount = snippets.filter((item) => snippetIdentity(item) === snippetIdentity(snippet)).length;
+  if (duplicateCount <= 1 && !shouldShowSnippetScope(scope)) return base;
+  if (scope) return `${base} · ${scope}`;
   const occurrence = snippets.slice(0, index + 1).filter((item) => item.path === snippet.path).length;
   return `${base} · ${occurrence}`;
+}
+
+function shouldShowSnippetScope(scope: string): boolean {
+  return Boolean(scope);
+}
+
+function snippetScopeLabel(snippet: CodeEvidence): string {
+  const title = snippet.title || "";
+  const scope = title.includes("·")
+    ? title.split("·").at(-1)?.trim()
+    : snippet.path && title.startsWith(snippet.path)
+      ? title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim()
+      : "";
+  if (!scope || scope === "file overview") return "";
+  return scope;
+}
+
+function pathLabelForSnippets(path: string, scope: string, snippets: CodeEvidence[]): string {
+  const short = shortPathLabel(path);
+  const sameVisibleLabelCount = snippets.filter((item) => shortPathLabel(item.path || item.title || "관련 파일") === short && snippetScopeLabel(item) === scope).length;
+  if (sameVisibleLabelCount <= 1) return short;
+  return disambiguatedPathLabel(path);
+}
+
+function disambiguatedPathLabel(path: string): string {
+  const parts = path.trim().split("/").filter(Boolean);
+  if (parts.length <= 1) return parts[0] ?? path;
+  return `${parts.at(-2)}/${parts.at(-1)}`;
+}
+
+function dedupeSnippets(snippets: CodeEvidence[]): CodeEvidence[] {
+  return [...new Map(snippets.map((snippet) => [snippetIdentity(snippet), snippet])).values()];
+}
+
+function snippetIdentity(snippet: CodeEvidence): string {
+  return `${snippet.path}:${snippetScopeLabel(snippet) || snippet.id}`;
+}
+
+function snippetKey(snippet: CodeEvidence, index: number): string {
+  return `${snippetIdentity(snippet)}:${snippet.id || index}`;
 }
 
 function shortPathLabel(path: string): string {

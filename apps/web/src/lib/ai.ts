@@ -1311,7 +1311,12 @@ function enforceUnderstandingQuestionQuality(
   fallback: UnderstandingQuestion[],
   evidenceSnippets: CodeEvidence[]
 ): UnderstandingQuestion[] {
-  return enforceQuestionQuality(questions, fallback, evidenceSnippets, buildUnderstandingQuestionFromEvidence);
+  const repaired = enforceQuestionQuality(questions, fallback, evidenceSnippets, buildUnderstandingQuestionFromEvidence);
+  return repaired.map((question, index) =>
+    isUnderstandingQuestionScopeAllowed(question)
+      ? question
+      : buildUnderstandingQuestionFromEvidence(question, fallback[index] ?? question, evidenceSnippets, new Set(), index)
+  );
 }
 
 function enforceCommitQuestionQuality(
@@ -1356,11 +1361,12 @@ function buildUnderstandingQuestionFromEvidence(
   usedPaths: Set<string>,
   index: number
 ): UnderstandingQuestion {
-  const selected = pickUnusedEvidence(evidenceSnippets, usedPaths, index);
-  const primaryPath = selected[0]?.path ?? fallbackQuestion.relatedFiles[0] ?? "핵심 파일";
+  const selected = pickUnusedUnderstandingEvidence(evidenceSnippets, usedPaths, index, question.type || fallbackQuestion.type);
+  const primaryPath = selected[0] ? understandingQuestionSubject(selected[0]) : fallbackQuestion.relatedFiles[0] ?? "핵심 파일";
+  const secondaryPath = selected.length > 1 ? understandingQuestionSubject(selected[1]) : primaryPath;
   return {
     ...question,
-    question: buildUnderstandingQuestionText(question.type || fallbackQuestion.type, primaryPath),
+    question: buildUnderstandingQuestionText(question.type || fallbackQuestion.type, primaryPath, secondaryPath, selected.length > 1),
     relatedFiles: selected.map((snippet) => snippet.path),
     evidenceSnippets: selected
   };
@@ -1390,12 +1396,67 @@ function pickUnusedEvidence(evidenceSnippets: CodeEvidence[], usedPaths: Set<str
   return [pool[index % pool.length]];
 }
 
-function buildUnderstandingQuestionText(type: QuestionType, primaryPath: string): string {
-  if (type === "요청 흐름") return `${primaryPath}의 요청 처리 흐름이 어떤 파일들과 연결되는지 설명해주세요.`;
-  if (type === "데이터 흐름") return `${primaryPath}에서 데이터 입력, 검증, 조회 또는 저장 흐름이 어떻게 드러나는지 설명해주세요.`;
-  if (type === "변경 영향도") return `${primaryPath}의 동작을 수정할 때 어떤 영향 범위를 함께 확인해야 하나요?`;
+function pickUnusedUnderstandingEvidence(evidenceSnippets: CodeEvidence[], usedPaths: Set<string>, index: number, type: QuestionType): CodeEvidence[] {
+  if (type !== "구조 이해") return pickUnusedEvidence(evidenceSnippets, usedPaths, index);
+  const candidates = evidenceSnippets.filter((snippet) => !usedPaths.has(snippet.path));
+  const pool = candidates.length ? candidates : evidenceSnippets;
+  const structurePool = pool.filter((snippet) => ["entry", "service", "ui"].includes(snippet.kind) && !isContractLikePath(snippet.path) && !isMaintenanceLikePath(snippet.path));
+  const selectedPool = structurePool.length ? structurePool : pool;
+  return selectedPool.length ? [selectedPool[0]] : [];
+}
+
+function buildUnderstandingQuestionText(type: QuestionType, primaryPath: string, secondaryPath = primaryPath, hasMultipleEvidence = false): string {
+  if (type === "요청 흐름") {
+    if (hasMultipleEvidence && primaryPath !== secondaryPath) return `${primaryPath}가 ${secondaryPath}와 어떻게 연결되어 요청을 처리하는지 설명해주세요.`;
+    return `${primaryPath}는 요청 처리에서 어떤 역할을 담당하나요?`;
+  }
+  if (type === "데이터 흐름") return `${primaryPath}에서 데이터 입력, 검증, 조회 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.`;
+  if (type === "변경 영향도") return `${primaryPath}의 동작을 수정할 때 이 코드 조각 안에서 어떤 영향 범위를 확인해야 하나요?`;
   if (type === "면접형") return `면접이나 코드리뷰에서 ${primaryPath}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`;
-  return `${primaryPath}의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.`;
+  if (hasMultipleEvidence && primaryPath !== secondaryPath) return `${primaryPath}와 ${secondaryPath}의 역할과 연결 흐름을 설명해주세요.`;
+  return `${primaryPath}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?`;
+}
+
+function isUnderstandingQuestionScopeAllowed(question: UnderstandingQuestion): boolean {
+  if (question.type !== "구조 이해" || !isOverbroadStructureQuestion(question.question)) return true;
+  const snippets = question.evidenceSnippets ?? [];
+  return hasMultiLayerSelectedEvidence(snippets) && !snippets.every(isFileOverviewEvidence);
+}
+
+function isOverbroadStructureQuestion(question: string): boolean {
+  return /(이\s*)?프로젝트의?\s*(주요|전체)?\s*(구조|폴더\s*구조|실행\s*진입점)|주요\s*폴더\s*구조/.test(question);
+}
+
+function hasMultiLayerSelectedEvidence(snippets: CodeEvidence[]): boolean {
+  const layers = new Set(snippets.map((snippet) => snippet.kind).filter((kind) => ["entry", "service", "data", "ui", "config"].includes(kind)));
+  const paths = new Set(snippets.map((snippet) => snippet.path).filter(Boolean));
+  return layers.size >= 2 && paths.size >= 2;
+}
+
+function isFileOverviewEvidence(snippet: CodeEvidence): boolean {
+  return snippet.title.includes("file overview");
+}
+
+function isContractLikePath(path: string): boolean {
+  return /(^|\/)(schemas?|models?|entities?|dto|types?)(\/|$)|(?:schema|model|entity|dto|types?)\./i.test(path);
+}
+
+function isMaintenanceLikePath(path: string): boolean {
+  return /(fixer|repair|migration|constraint|patch|backfill|seed|script|maintenance|cleanup)/i.test(path);
+}
+
+function understandingQuestionSubject(snippet: CodeEvidence): string {
+  const scope = evidenceScopeTitle(snippet);
+  if (!scope || scope === "file overview") return `${snippet.path}의 코드 조각`;
+  if (/^(GET|POST|PUT|PATCH|DELETE)$/.test(scope)) return `${snippet.path}의 ${scope} handler`;
+  if (["request flow", "data flow", "error handling", "configuration"].includes(scope)) return `${snippet.path}의 ${scope} 코드 조각`;
+  return `${snippet.path}의 ${scope} 코드`;
+}
+
+function evidenceScopeTitle(snippet: CodeEvidence): string {
+  if (snippet.title.includes("·")) return snippet.title.split("·").at(-1)?.trim() ?? "";
+  if (snippet.path && snippet.title.startsWith(snippet.path)) return snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim();
+  return snippet.title.trim();
 }
 
 function buildCommitQuestionText(type: CommitQuestionType, primaryPath: string): string {
@@ -1441,7 +1502,16 @@ function pathMatches(actualPath: string, expectedPath: string): boolean {
 }
 
 function compactEvidence(snippets: CodeEvidence[]): CodeEvidence[] {
-  return [...new Map(snippets.slice(0, 3).map((snippet) => [snippet.id, snippet])).values()];
+  return [...new Map(snippets.map((snippet) => [evidenceIdentity(snippet), snippet])).values()].slice(0, 3);
+}
+
+function evidenceIdentity(snippet: CodeEvidence): string {
+  const scope = snippet.title.includes("·")
+    ? snippet.title.split("·").at(-1)?.trim() ?? ""
+    : snippet.path && snippet.title.startsWith(snippet.path)
+      ? snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim()
+      : "";
+  return `${snippet.path}:${scope || snippet.id}`;
 }
 
 function pickRelatedFiles(files: FileSummary[], relatedPaths: string[], searchText: string): FileSummary[] {

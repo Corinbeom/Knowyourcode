@@ -9,6 +9,8 @@ MAX_CONTEXT_FILES = 15
 MAX_EXCERPT_LENGTH = 1600
 MAX_EVIDENCE_SNIPPETS = 24
 MAX_REPO_SNIPPET_LENGTH = 1200
+OMITTED_BEFORE_MARKER = "... 이전 코드 생략 ..."
+OMITTED_AFTER_MARKER = "... 이후 코드 생략 ..."
 
 
 def normalize_focus(value: str | None) -> str:
@@ -73,8 +75,8 @@ def build_fallback_repo_analysis(context: dict) -> dict:
     evidence_snippets = context.get("evidenceSnippets", [])
     request_evidence = pick_evidence_by_capability(evidence_snippets, supports_request_or_service_evidence, ["entry", "service"], 3)
     data_evidence = pick_evidence_by_capability(evidence_snippets, supports_data_flow_evidence, ["data", "service", "entry"], 3)
-    structure_file = pick_context_file(context["contextFiles"], ["entry", "ui", "service", "config"])
     request_files = [{"path": path} for path in evidence_paths(request_evidence)] or pick_context_files(context["contextFiles"], ["entry", "service"], 2)
+    structure_file = pick_structure_context_file(context["contextFiles"], request_files)
     data_files = [{"path": path} for path in evidence_paths(data_evidence)] or pick_context_files(context["contextFiles"], ["data", "service"], 2)
     impact_files = pick_context_files(context["contextFiles"], ["service", "ui", "entry", "config"], 2)
     interview_files = pick_context_files(context["contextFiles"], ["entry", "service", "data", "config"], 2)
@@ -82,6 +84,8 @@ def build_fallback_repo_analysis(context: dict) -> dict:
     second_path = request_files[0]["path"] if request_files else first_path
     data_path = data_files[0]["path"] if data_files else first_path
     question_types = context["questionTypes"]
+    structure_evidence = compact_evidence_list([pick_evidence_for_path(evidence_snippets, first_path)])
+    structure_subject = fallback_question_subject(structure_evidence[0]) if structure_evidence else f"{first_path}의 코드 조각"
 
     return {
         "repo": context["repo"],
@@ -113,9 +117,9 @@ def build_fallback_repo_analysis(context: dict) -> dict:
             {
                 "id": "q1",
                 "type": question_types[0],
-                "question": f"{first_path}의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요.",
+                "question": f"{structure_subject}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?",
                 "relatedFiles": [first_path],
-                "evidenceSnippets": compact_evidence_list([pick_evidence_for_path(evidence_snippets, first_path)]),
+                "evidenceSnippets": structure_evidence,
             },
             {
                 "id": "q2",
@@ -127,7 +131,7 @@ def build_fallback_repo_analysis(context: dict) -> dict:
             {
                 "id": "q3",
                 "type": question_types[2 % len(question_types)],
-                "question": f"{data_path}에서 데이터 입력, 검증, 조회 또는 저장 흐름이 어떻게 드러나는지 설명해주세요.",
+                "question": f"{data_path}에서 데이터 입력, 검증, 조회 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.",
                 "relatedFiles": [file["path"] for file in data_files] or [first_path],
                 "evidenceSnippets": compact_evidence_list(data_evidence or [pick_evidence_for_path(evidence_snippets, file["path"]) for file in data_files] or [pick_evidence_for_path(evidence_snippets, first_path)]),
             },
@@ -149,6 +153,17 @@ def build_fallback_repo_analysis(context: dict) -> dict:
     }
 
 
+def fallback_question_subject(snippet: dict) -> str:
+    path = str(snippet.get("path") or "핵심 파일")
+    title = str(snippet.get("title") or "")
+    scope = title.split("·", 1)[1].strip() if "·" in title else title.replace(path, "", 1).strip(" ·-")
+    if not scope or scope == "file overview":
+        return f"{path}의 코드 조각"
+    if re.fullmatch(r"GET|POST|PUT|PATCH|DELETE", scope):
+        return f"{path}의 {scope} handler"
+    return f"{path}의 {scope} 코드"
+
+
 def build_repo_evidence_snippets(files: list[dict], focus: str, question_targets: list[str]) -> list[dict]:
     guaranteed = []
     extras = []
@@ -168,9 +183,9 @@ def to_repo_file_evidence(file: dict, focus: str, question_targets: list[str]) -
     if not content:
         return [make_repo_evidence(file, 0, "file unavailable", "", focus, question_targets)]
 
-    chunks = [("file overview", content[:MAX_REPO_SNIPPET_LENGTH])]
-    chunks.extend(extract_symbol_chunks(content)[:3])
-    chunks.extend(extract_keyword_chunks(content, path)[:3])
+    chunks = rank_repo_chunks([*extract_symbol_chunks(content)[:3], *extract_keyword_chunks(content, path)[:3]], path)
+    if not any(excerpt.strip() for _, excerpt in chunks):
+        chunks = [("file overview", slice_around(content, 0, MAX_REPO_SNIPPET_LENGTH))]
     return [
         make_repo_evidence(file, index, title, excerpt, focus, question_targets)
         for index, (title, excerpt) in enumerate(chunks)
@@ -187,14 +202,48 @@ def extract_symbol_chunks(content: str) -> list[tuple[str, str]]:
         r"^\s*class\s+([A-Za-z0-9_]+)",
         r"^\s*(public|private|protected)?\s*(static\s+)?[A-Za-z0-9_<>, ?\[\]]+\s+([A-Za-z0-9_]+)\s*\(",
     ]
-    chunks = []
+    matches = []
     for pattern in patterns:
         for match in re.finditer(pattern, content, re.M):
             symbol = next((group for group in reversed(match.groups()) if group), "symbol")
-            chunks.append((symbol, slice_around(content, match.start(), MAX_REPO_SNIPPET_LENGTH)))
-            if len(chunks) >= 6:
-                return chunks
+            matches.append((match.start(), symbol))
+    chunks = []
+    seen = set()
+    for start, symbol in sorted(matches, key=lambda item: item[0]):
+        key = (start, symbol)
+        if key in seen:
+            continue
+        seen.add(key)
+        chunks.append((symbol, slice_around(content, start, MAX_REPO_SNIPPET_LENGTH)))
+        if len(chunks) >= 6:
+            break
     return chunks
+
+
+def rank_repo_chunks(chunks: list[tuple[str, str]], path: str) -> list[tuple[str, str]]:
+    return [
+        chunk
+        for _, chunk in sorted(
+            enumerate(chunks),
+            key=lambda item: (repo_chunk_priority(item[1][0], item[1][1], path), item[0]),
+        )
+    ]
+
+
+def repo_chunk_priority(title: str, excerpt: str, path: str) -> int:
+    if re.fullmatch(r"GET|POST|PUT|PATCH|DELETE", title):
+        return 0
+    if is_entrypoint_file(path) and re.search(r"\bexport\s+(async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b", excerpt):
+        return 1
+    if title in {"runtime", "dynamic", "revalidate", "preferredRegion", "maxDuration", "fetchCache"}:
+        return 8
+    if title in {"request flow", "data flow", "error handling"}:
+        return 3
+    if title == "configuration":
+        return 7
+    if title == "file overview":
+        return 9
+    return 2
 
 
 def extract_keyword_chunks(content: str, path: str) -> list[tuple[str, str]]:
@@ -225,8 +274,8 @@ def make_repo_evidence(file: dict, index: int, title: str, excerpt: str, focus: 
     return {
         "id": f"{sanitize_evidence_id(path)}:{index}",
         "path": path,
-        "title": f"{path} {title}",
-        "reason": infer_file_reason(path),
+        "title": f"{path} · {title}",
+        "reason": infer_evidence_reason(path, title, excerpt),
         "excerpt": excerpt[:MAX_REPO_SNIPPET_LENGTH],
         "kind": file_layer(path),
         "score": score_file(file, focus, question_targets) + score_repo_excerpt(title, excerpt),
@@ -235,11 +284,27 @@ def make_repo_evidence(file: dict, index: int, title: str, excerpt: str, focus: 
 
 def score_repo_excerpt(title: str, excerpt: str) -> int:
     score = min(len(excerpt), MAX_REPO_SNIPPET_LENGTH) // 100
-    if title != "file overview":
+    if title == "file overview":
+        score -= 24
+    else:
         score += 18
     if re.search(r"function|class|def |return|async|await|fetch|axios|router|route|controller|service|repository", excerpt, re.I):
         score += 16
     return score
+
+
+def infer_evidence_reason(path: str, title: str, excerpt: str) -> str:
+    if title == "file overview":
+        return infer_file_reason(path)
+
+    text = f"{path}\n{title}\n{excerpt}"
+    if re.search(r"\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|route|router|controller|handler|api/", text, re.I):
+        return "요청 처리와 API/서비스 연결 흐름을 확인할 수 있는 코드 조각"
+    if re.search(r"\b(schema|model|repository|entity|database|query\w*|save\w*|create\w*|update\w*|delete\w*|find\w*|fetch\w*|parse\w*|validate\w*)\b", text, re.I):
+        return "데이터 입력, 검증, 조회 또는 변환 흐름을 확인할 수 있는 코드 조각"
+    if re.search(r"\b(except|catch|raise|throw|HTTPError|URLError|ValueError|Exception)\b", text, re.I):
+        return "예외 처리와 실패 경계를 확인할 수 있는 코드 조각"
+    return "선택된 함수나 클래스의 책임을 확인할 수 있는 코드 조각"
 
 
 def sanitize_evidence_id(path: str) -> str:
@@ -279,12 +344,21 @@ def supports_request_flow_evidence(snippet: dict) -> bool:
         return False
     return bool(
         is_entrypoint_file(path)
-        or re.search(r"\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b", text, re.I)
+        or re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]", text, re.I)
     )
 
 
 def supports_request_or_service_evidence(snippet: dict) -> bool:
-    return supports_request_flow_evidence(snippet) or snippet.get("kind") == "service"
+    return supports_request_flow_evidence(snippet) or is_request_helper_evidence(snippet)
+
+
+def is_request_helper_evidence(snippet: dict) -> bool:
+    if str(snippet.get("kind") or "") != "service":
+        return False
+    text = f"{snippet.get('path', '')}\n{snippet.get('title', '')}\n{snippet.get('excerpt', '')}"
+    if re.search(r"\bdocs?_enabled|openapi|redoc|swagger|cors|allowed_origins\b", text, re.I):
+        return False
+    return bool(re.search(r"\b(parse\w*|validate\w*|fetch\w*|build\w*|analyze\w*|evaluate\w*|create\w*|update\w*|delete\w*|request\.json|urlparse|urlopen|axios)\b", text, re.I))
 
 
 def supports_data_flow_evidence(snippet: dict) -> bool:
@@ -321,11 +395,21 @@ def compact_evidence_list(snippets: list[dict | None]) -> list[dict]:
     result = []
     seen = set()
     for snippet in snippets:
-        if not snippet or snippet.get("id") in seen:
+        if not snippet:
             continue
-        seen.add(snippet.get("id"))
+        key = evidence_identity(snippet)
+        if key in seen:
+            continue
+        seen.add(key)
         result.append({key: snippet[key] for key in ["id", "path", "title", "reason", "excerpt", "kind"] if key in snippet})
     return result[:3]
+
+
+def evidence_identity(snippet: dict) -> str:
+    path = str(snippet.get("path") or "")
+    title = str(snippet.get("title") or "")
+    scope = title.split("·", 1)[1].strip() if "·" in title else title.replace(path, "", 1).strip(" ·-")
+    return f"{path}:{scope or str(snippet.get('id') or '')}"
 
 
 def select_context_files(files: list[dict], focus: str, question_targets: list[str]) -> list[dict]:
@@ -400,8 +484,60 @@ def smart_excerpt(content: str) -> str:
 
 
 def slice_around(content: str, index: int, length: int) -> str:
+    normalized = content.replace("\r\n", "\n")
+    if len(normalized) <= length:
+        return normalized
+
     start = max(index - length // 2, 0)
-    return content[start : start + length]
+    end = min(start + length, len(normalized))
+    if end == len(normalized):
+        start = max(len(normalized) - length, 0)
+
+    has_before = start > 0
+    has_after = end < len(normalized)
+    marker_overhead = 0
+    if has_before:
+        marker_overhead += len(OMITTED_BEFORE_MARKER) + 2
+    if has_after:
+        marker_overhead += len(OMITTED_AFTER_MARKER) + 2
+
+    body_length = max(120, length - marker_overhead)
+    start = max(index - body_length // 2, 0)
+    end = min(start + body_length, len(normalized))
+    if end == len(normalized):
+        start = max(len(normalized) - body_length, 0)
+    start, end = align_slice_to_lines(normalized, start, end, index)
+
+    parts = []
+    if start > 0:
+        parts.append(OMITTED_BEFORE_MARKER)
+    parts.append(normalized[start:end].strip("\n"))
+    if end < len(normalized):
+        parts.append(OMITTED_AFTER_MARKER)
+    return "\n\n".join(parts)
+
+
+def align_slice_to_lines(content: str, start: int, end: int, index: int) -> tuple[int, int]:
+    if start > 0:
+        next_newline = content.find("\n", start)
+        if next_newline != -1 and next_newline < index:
+            start = next_newline + 1
+        else:
+            start = content.rfind("\n", 0, index) + 1
+
+    if end < len(content):
+        previous_newline = content.rfind("\n", 0, end)
+        if previous_newline > index:
+            end = previous_newline
+        else:
+            next_newline = content.find("\n", index)
+            end = len(content) if next_newline == -1 else next_newline
+
+    if start >= end:
+        line_start = content.rfind("\n", 0, index) + 1
+        line_end = content.find("\n", index)
+        return line_start, len(content) if line_end == -1 else line_end
+    return start, end
 
 
 def find_symbol_excerpt(content: str) -> str:
@@ -485,6 +621,21 @@ def select_diverse_files(files: list[dict], layers: list[str], per_layer: int) -
 def pick_context_file(files: list[dict], layers: list[str]) -> dict | None:
     picked = pick_context_files(files, layers, 1)
     return picked[0] if picked else (files[0] if files else None)
+
+
+def pick_structure_context_file(files: list[dict], request_files: list[dict]) -> dict:
+    for request_file in request_files:
+        path = request_file.get("path")
+        if not path:
+            continue
+        matched = next((file for file in files if file["path"] == path), None)
+        if matched and not is_contract_like_path(path):
+            return matched
+    return pick_context_file(files, ["entry", "service", "ui", "config"]) or {"path": "핵심 파일"}
+
+
+def is_contract_like_path(path: str) -> bool:
+    return bool(re.search(r"(^|/)(schemas?|models?|entities?|dto|types?)(/|$)|(?:schema|model|entity|dto|types?)\.", path, re.I))
 
 
 def pick_context_files(files: list[dict], layers: list[str], limit: int) -> list[dict]:
