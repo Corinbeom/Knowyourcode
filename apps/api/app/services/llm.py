@@ -505,12 +505,18 @@ def enforce_repo_question_quality(questions: list[dict], fallback: list[dict], e
     if not evidence_snippets:
         return questions
 
-    return enforce_question_quality(
+    repaired = enforce_question_quality(
         questions,
         fallback,
         evidence_snippets,
         lambda question, used_paths, index: build_repo_question_from_evidence(question, fallback[index] if index < len(fallback) else question, evidence_snippets, index, used_paths),
     )
+    return [
+        question
+        if not (question.get("type") == "구조 이해" and is_overbroad_structure_question(question) and not is_repo_question_evidence_aligned(question, evidence_snippets))
+        else build_repo_question_from_evidence(question, fallback[index] if index < len(fallback) else question, evidence_snippets, index)
+        for index, question in enumerate(repaired)
+    ]
 
 
 def enforce_question_quality(questions: list[dict], fallback: list[dict], evidence_snippets: list[dict], repair_builder) -> list[dict]:
@@ -577,6 +583,8 @@ def is_repo_question_evidence_aligned(question: dict, all_evidence: list[dict]) 
         return False
     if not is_question_evidence_aligned(question):
         return False
+    if has_explicit_symbol_label_mismatch(question, all_evidence):
+        return False
 
     question_type = question.get("type")
     snippets = question.get("evidenceSnippets", []) if isinstance(question.get("evidenceSnippets"), list) else []
@@ -584,6 +592,12 @@ def is_repo_question_evidence_aligned(question: dict, all_evidence: list[dict]) 
     paths = {str(snippet.get("path") or "") for snippet in snippets if isinstance(snippet, dict) and snippet.get("path")}
     available_kinds = {str(snippet.get("kind") or "") for snippet in all_evidence}
     primary_path = first_question_path(question)
+
+    if question_type == "구조 이해" and is_overbroad_structure_question(question):
+        if not has_multi_layer_selected_repo_evidence(snippets):
+            return False
+        if all(is_file_overview_evidence(snippet) for snippet in snippets):
+            return False
 
     if question_type == "요청 흐름":
         if primary_path and is_config_like_path(primary_path) and has_better_repo_flow_evidence(all_evidence):
@@ -640,20 +654,50 @@ def is_too_generic_repo_question(question: dict) -> bool:
     return any(re.search(pattern, text) for pattern in generic_patterns)
 
 
+def is_overbroad_structure_question(question: dict) -> bool:
+    text = str(question.get("question") or "")
+    return bool(re.search(r"(이\s*)?프로젝트의?\s*(주요|전체)?\s*(구조|폴더\s*구조|실행\s*진입점)|주요\s*폴더\s*구조", text))
+
+
+def has_multi_layer_selected_repo_evidence(snippets: list[dict]) -> bool:
+    layers = {
+        str(snippet.get("kind") or "")
+        for snippet in snippets
+        if isinstance(snippet, dict) and snippet.get("kind") in {"entry", "service", "data", "ui", "config"}
+    }
+    paths = {
+        str(snippet.get("path") or "")
+        for snippet in snippets
+        if isinstance(snippet, dict) and snippet.get("path")
+    }
+    return len(layers) >= 2 and len(paths) >= 2
+
+
+def is_file_overview_evidence(snippet: dict) -> bool:
+    title = str(snippet.get("title") or "")
+    return "file overview" in title
+
+
 def select_repo_evidence_for_question(question: dict, evidence_snippets: list[dict]) -> list[dict]:
     explicit_paths = extract_question_paths(str(question.get("question") or ""))
+    explicit_symbols = extract_question_symbols(str(question.get("question") or ""))
     if explicit_paths:
-        path_matches_only = [
+        candidates = [
             snippet
             for snippet in select_evidence_for_question(question, evidence_snippets)
             if any(path_matches(snippet.get("path", ""), path) for path in explicit_paths)
         ]
-        return path_matches_only[:3]
+        symbol_title_matches = [
+            snippet
+            for snippet in candidates
+            if any(symbol_in_title(snippet, symbol) for symbol in explicit_symbols)
+        ]
+        return (symbol_title_matches or candidates)[:3]
 
     question_type = question.get("type")
     if question_type == "요청 흐름":
         return select_layered_repo_evidence(
-            [snippet for snippet in evidence_snippets if supports_request_flow_evidence(snippet) or snippet.get("kind") == "service"],
+            [snippet for snippet in evidence_snippets if supports_request_flow_evidence(snippet) or is_request_helper_evidence(snippet)],
             ["entry", "service", "config"],
             3,
         )
@@ -689,6 +733,15 @@ def select_repo_evidence_for_question(question: dict, evidence_snippets: list[di
             ["service", "entry", "data", "config"],
             3,
         )
+    if question_type == "구조 이해":
+        structure_evidence = [
+            snippet
+            for snippet in evidence_snippets
+            if str(snippet.get("kind") or "") in {"entry", "service", "ui"}
+            and not is_contract_like_path(str(snippet.get("path") or ""))
+            and not is_maintenance_like_path(str(snippet.get("path") or ""))
+        ]
+        return select_layered_repo_evidence(structure_evidence or evidence_snippets, ["entry", "service", "ui", "config"], 2, fill=False)
     return select_evidence_for_question(question, evidence_snippets)
 
 
@@ -754,7 +807,12 @@ def build_repo_question_from_evidence(question: dict, fallback_question: dict, e
     related_files = evidence_paths(selected)
     primary_path = related_files[0] if related_files else "핵심 파일"
     secondary_path = related_files[1] if len(related_files) > 1 else primary_path
-    question_text = build_repo_question_text(question_type, primary_path, secondary_path)
+    question_text = build_repo_question_text(
+        question_type,
+        repo_question_subject(selected[0]) if selected else primary_path,
+        repo_question_subject(selected[1]) if len(selected) > 1 else secondary_path,
+        len(related_files) > 1,
+    )
 
     return {
         "id": question.get("id") or fallback_question.get("id") or f"q{index + 1}",
@@ -765,16 +823,44 @@ def build_repo_question_from_evidence(question: dict, fallback_question: dict, e
     }
 
 
-def build_repo_question_text(question_type: str, primary_path: str, secondary_path: str) -> str:
+def build_repo_question_text(question_type: str, primary_path: str, secondary_path: str, has_multiple_evidence: bool = True) -> str:
     if question_type == "요청 흐름":
-        return f"{primary_path}의 요청 처리 코드가 {secondary_path}와 어떻게 연결되는지 설명해주세요."
+        if has_multiple_evidence and primary_path != secondary_path:
+            return f"{primary_path}가 {secondary_path}와 어떻게 연결되어 요청을 처리하는지 설명해주세요."
+        return f"{primary_path}는 요청 처리에서 어떤 역할을 담당하나요?"
     if question_type == "데이터 흐름":
-        return f"{primary_path}에서 데이터 입력, 검증, 조회 또는 저장 흐름이 어떻게 드러나는지 설명해주세요."
+        return f"{primary_path}에서 데이터 입력, 검증, 조회 또는 변환 흐름이 어떻게 드러나는지 설명해주세요."
     if question_type == "변경 영향도":
-        return f"{primary_path}의 동작을 수정할 때 {secondary_path}까지 어떤 영향이 이어질 수 있나요?"
+        if has_multiple_evidence and primary_path != secondary_path:
+            return f"{primary_path}의 동작을 수정할 때 {secondary_path}까지 어떤 영향이 이어질 수 있나요?"
+        return f"{primary_path}의 동작을 수정할 때 이 코드 조각 안에서 어떤 영향 범위를 확인해야 하나요?"
     if question_type == "면접형":
         return f"면접이나 코드리뷰에서 {primary_path}를 근거로 설계 의도와 위험 지점을 어떻게 설명하겠습니까?"
-    return f"{primary_path}의 역할을 기준으로 이 프로젝트의 주요 구조를 설명해주세요."
+    if has_multiple_evidence and primary_path != secondary_path:
+        return f"{primary_path}와 {secondary_path}의 역할과 연결 흐름을 설명해주세요."
+    return f"{primary_path}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?"
+
+
+def repo_question_subject(snippet: dict) -> str:
+    path = str(snippet.get("path") or "핵심 파일")
+    scope = evidence_scope_title(snippet)
+    if not scope or scope == "file overview":
+        return f"{path}의 코드 조각"
+    if re.fullmatch(r"GET|POST|PUT|PATCH|DELETE", scope):
+        return f"{path}의 {scope} handler"
+    if scope in {"request flow", "data flow", "error handling", "configuration"}:
+        return f"{path}의 {scope} 코드 조각"
+    return f"{path}의 {scope} 코드"
+
+
+def evidence_scope_title(snippet: dict) -> str:
+    title = str(snippet.get("title") or "")
+    path = str(snippet.get("path") or "")
+    if "·" in title:
+        return title.split("·", 1)[1].strip()
+    if path and title.startswith(path):
+        return title[len(path):].strip(" ·-")
+    return title.strip()
 
 
 def has_multi_layer_repo_evidence(evidence_snippets: list[dict], layers: set[str]) -> bool:
@@ -862,7 +948,13 @@ def has_weak_service_ui_pair(snippets: list[dict]) -> bool:
 def select_repo_fallback_evidence(question_type: str, evidence_snippets: list[dict]) -> list[dict]:
     if question_type == "요청 흐름":
         selected = select_layered_repo_evidence(
-            [snippet for snippet in evidence_snippets if not is_config_like_path(str(snippet.get("path") or "")) and not is_contract_like_path(str(snippet.get("path") or ""))],
+            [
+                snippet
+                for snippet in evidence_snippets
+                if not is_config_like_path(str(snippet.get("path") or ""))
+                and not is_contract_like_path(str(snippet.get("path") or ""))
+                and (supports_request_flow_evidence(snippet) or is_request_helper_evidence(snippet))
+            ],
             ["entry", "service"],
             3,
             fill=False,
@@ -919,8 +1011,17 @@ def supports_request_flow_evidence(snippet: dict) -> bool:
         return False
     return bool(
         is_entrypoint_path(path)
-        or re.search(r"\b(GET|POST|PUT|PATCH|DELETE|Request|Response|APIRouter|FastAPI|fetch\w*|urlopen|axios|NextRequest|NextResponse)\b", text, re.I)
+        or re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]", text, re.I)
     )
+
+
+def is_request_helper_evidence(snippet: dict) -> bool:
+    if str(snippet.get("kind") or "") != "service":
+        return False
+    text = f"{snippet.get('path', '')}\n{snippet.get('title', '')}\n{snippet.get('excerpt', '')}"
+    if re.search(r"\bdocs?_enabled|openapi|redoc|swagger|cors|allowed_origins\b", text, re.I):
+        return False
+    return bool(re.search(r"\b(parse\w*|validate\w*|fetch\w*|build\w*|analyze\w*|evaluate\w*|create\w*|update\w*|delete\w*|request\.json|urlparse|urlopen|axios)\b", text, re.I))
 
 
 def is_entrypoint_path(path: str) -> bool:
@@ -993,10 +1094,44 @@ def is_question_evidence_aligned(question: dict) -> bool:
     return hits >= required_hits
 
 
+def has_explicit_symbol_label_mismatch(question: dict, all_evidence: list[dict]) -> bool:
+    symbols = extract_question_symbols(str(question.get("question") or ""))
+    if not symbols:
+        return False
+    snippets = question.get("evidenceSnippets", []) if isinstance(question.get("evidenceSnippets"), list) else []
+    for symbol in symbols:
+        if any(symbol_in_title(snippet, symbol) for snippet in snippets):
+            continue
+        if any(symbol_in_title(snippet, symbol) for snippet in all_evidence):
+            return True
+    return False
+
+
+def extract_question_symbols(text: str) -> list[str]:
+    path_parts = {part.lower() for path in extract_question_paths(text) for part in re.split(r"[/._-]+", path) if len(part) >= 3}
+    candidates = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", text)
+    stop_words = {"GET", "POST", "PUT", "PATCH", "DELETE", "HTTP", "API", "URL"}
+    symbols = []
+    for candidate in candidates:
+        lowered = candidate.lower()
+        if candidate in stop_words or lowered in path_parts:
+            continue
+        if "_" not in candidate and not re.search(r"[a-z][A-Z]", candidate):
+            continue
+        symbols.append(candidate)
+    return list(dict.fromkeys(symbols))[:5]
+
+
+def symbol_in_title(snippet: dict, symbol: str) -> bool:
+    title = str(snippet.get("title") or "")
+    return bool(re.search(rf"(^|[^\w]){re.escape(symbol)}($|[^\w])", title))
+
+
 def select_evidence_for_question(question: dict, evidence_snippets: list[dict]) -> list[dict]:
     question_text = str(question.get("question") or "")
     paths = extract_question_paths(question_text) or [str(path) for path in question.get("relatedFiles", []) if path]
     keywords = extract_question_keywords(question_text)
+    symbols = extract_question_symbols(question_text)
     scored = []
 
     for snippet in evidence_snippets:
@@ -1005,6 +1140,11 @@ def select_evidence_for_question(question: dict, evidence_snippets: list[dict]) 
         text = f"{snippet_path}\n{snippet.get('title', '')}\n{snippet.get('reason', '')}\n{snippet.get('excerpt', '')}".lower()
         if any(path_matches(snippet_path, path) for path in paths):
             score += 80
+        for symbol in symbols:
+            if symbol_in_title(snippet, symbol):
+                score += 120
+            elif symbol.lower() in text:
+                score += 24
         for keyword in keywords:
             lowered = keyword.lower()
             if lowered in snippet_path.lower():
@@ -1123,9 +1263,10 @@ def compact_evidence(snippets: list[dict]) -> list[dict]:
     seen = set()
     for snippet in snippets:
         snippet_id = snippet.get("id")
-        if not snippet_id or snippet_id in seen:
+        key = evidence_identity(snippet)
+        if not snippet_id or key in seen:
             continue
-        seen.add(snippet_id)
+        seen.add(key)
         result.append(
             {
                 "id": str(snippet_id),
@@ -1136,7 +1277,14 @@ def compact_evidence(snippets: list[dict]) -> list[dict]:
                 "kind": str(snippet.get("kind") or snippet.get("changeType") or "changed"),
             }
         )
-    return result
+    return result[:3]
+
+
+def evidence_identity(snippet: dict) -> str:
+    path = str(snippet.get("path") or "")
+    title = str(snippet.get("title") or "")
+    scope = title.split("·", 1)[1].strip() if "·" in title else title.replace(path, "", 1).strip(" ·-")
+    return f"{path}:{scope or str(snippet.get('id') or '')}"
 
 
 def normalize_repo_report(value: object, fallback: dict, context_files: list[dict]) -> dict:

@@ -1775,6 +1775,17 @@ p {
   background: rgba(251, 191, 36, 0.08);
 }
 
+.code-excerpt__line.is-omitted {
+  color: rgba(190, 204, 190, 0.72);
+  background: rgba(148, 163, 148, 0.08);
+  font-style: italic;
+}
+
+.code-excerpt__line.is-omitted .code-excerpt__number {
+  color: rgba(190, 204, 190, 0.5);
+  background: rgba(148, 163, 148, 0.06);
+}
+
 .quiz-answer {
   grid-column: 1 / -1;
   display: grid;
