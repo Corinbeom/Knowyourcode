@@ -35,6 +35,8 @@ def analyze_repo(payload: AnalyzeRepoRequest, quota: dict = Depends(repo_quota_l
         context = build_repo_static_context(repo, files, focus, question_level, question_types, question_targets)
         fallback = build_fallback_repo_analysis(context)
         analysis = generate_repo_analysis(context, fallback)
+        if not analysis.get("questions"):
+            raise HTTPException(status_code=422, detail=analysis.get("ai", {}).get("reason") or "분석 가능한 실행 흐름이 부족합니다.")
         return {"analysis": analysis, "limits": consume_authenticated_quota(quota)}
     except HTTPException:
         raise

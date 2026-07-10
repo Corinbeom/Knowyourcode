@@ -59,7 +59,7 @@ class CommitEvidenceTest(unittest.TestCase):
         self.assertNotIn("process_commit_con\n", hunk["excerpt"])
         self.assertTrue(all(line == long_line or line.startswith("@@") or "변경 내용 생략" in line for line in hunk["excerpt"].splitlines()))
 
-    def test_patchless_file_creates_fallback_evidence(self):
+    def test_patchless_file_does_not_create_question_evidence(self):
         snippets = build_commit_evidence_snippets(
             [
                 {
@@ -73,9 +73,7 @@ class CommitEvidenceTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(len(snippets), 1)
-        self.assertEqual(snippets[0]["path"], "public/logo.png")
-        self.assertIn("patch를 제공하지 않는 파일", snippets[0]["excerpt"])
+        self.assertEqual(snippets, [])
 
     def test_invalid_llm_snippet_id_falls_back_to_path_evidence(self):
         evidence = build_commit_evidence_snippets(
@@ -104,7 +102,7 @@ class CommitEvidenceTest(unittest.TestCase):
         self.assertEqual(len(questions), 4)
         self.assertEqual(questions[0]["evidenceSnippets"][0]["id"], evidence[0]["id"])
 
-    def test_fallback_commit_questions_all_have_evidence(self):
+    def test_fallback_commit_requires_minimum_strong_evidence(self):
         context = build_commit_static_context(
             sample_commit_changes(
                 [
@@ -122,8 +120,8 @@ class CommitEvidenceTest(unittest.TestCase):
 
         analysis = build_fallback_commit_analysis(context)
 
-        self.assertEqual(len(analysis["questions"]), 4)
-        self.assertTrue(all(question["evidenceSnippets"] for question in analysis["questions"]))
+        self.assertEqual(analysis["questions"], [])
+        self.assertIn("분석 가능한 실행 흐름이 부족", analysis["ai"]["reason"])
 
     def test_refine_reselects_evidence_when_question_path_mismatches(self):
         route_evidence = {

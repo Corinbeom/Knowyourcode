@@ -37,6 +37,7 @@ class CodeEvidence(BaseModel):
     reason: str
     excerpt: str = ""
     kind: str = "changed"
+    quality: Literal["strong", "conditional", "weak"] | None = None
 
 
 class CommitReport(BaseModel):

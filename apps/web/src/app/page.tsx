@@ -122,9 +122,10 @@ export default function Home() {
           <div>
             <p className="eyebrow">AI 코드 이해도 테스트</p>
             <h1>
-              AI가 만든 코드,
-              <br />
-              <span className="gradient-text">당신은 설명할 수 있나요?</span>
+              <span className="hero-title-line">AI가 만든 코드,</span>
+              <span className="hero-title-line hero-title-line--question gradient-text">
+                당신은 설명할 수 있나요?
+              </span>
             </h1>
             <p className="hero__copy">
               KnowYourCode는 GitHub 저장소와 커밋을 분석하고, 요청 흐름, 데이터 흐름, 변경 영향도를 질문으로 검증해
@@ -141,7 +142,7 @@ export default function Home() {
             <div className="hero__meta">
               <span>· Public repository 지원</span>
               <span>· Repo / Commit Mode 지원</span>
-              <span>· 질문 5개 기반 테스트</span>
+              <span>· 모드별 2~5개 질문</span>
               <span>· 코드 근거 피드백</span>
             </div>
           </div>

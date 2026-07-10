@@ -15,6 +15,7 @@ export function sanitizeRepoAnalysis(analysis: AnalysisResult): AnalysisResult {
 function isQuestionAllowed(question: UnderstandingQuestion, allEvidence: CodeEvidence[]): boolean {
   const snippets = question.evidenceSnippets ?? [];
   if (!snippets.length) return false;
+  if (hasQuestionCapabilityGap(question)) return false;
 
   const primaryPath = firstQuestionPath(question);
   const hasBetter = hasBetterFlowEvidence(allEvidence);
@@ -29,7 +30,9 @@ function isQuestionAllowed(question: UnderstandingQuestion, allEvidence: CodeEvi
     if (primaryPath && (isConfigLikePath(primaryPath) || isContractLikePath(primaryPath)) && hasBetter) return false;
     if (/config\.py의\s*요청\s*처리\s*코드/.test(question.question)) return false;
     if (snippets.some(isRouteConfigScope)) return false;
-    return snippets.some(supportsRequestFlowEvidence) && snippets.some((snippet) => snippet.kind === "entry");
+    return snippets.some(supportsRequestFlowEvidence)
+      && snippets.some((snippet) => snippet.kind === "entry")
+      && evidenceSnippetsConnected(snippets);
   }
 
   if (question.type === "데이터 흐름") {
@@ -53,6 +56,41 @@ function isQuestionAllowed(question: UnderstandingQuestion, allEvidence: CodeEvi
   return true;
 }
 
+function hasQuestionCapabilityGap(question: UnderstandingQuestion): boolean {
+  const evidenceText = (question.evidenceSnippets ?? []).map((snippet) => snippet.excerpt).join("\n");
+  if (/예외\s*처리|오류\s*처리|실패\s*(경로|처리)/.test(question.question)
+    && !/\b(try|except|catch|throw|raise|HTTPError|URLError|Exception|ValueError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d/i.test(evidenceText)) return true;
+  if (/회귀\s*(위험|범위)/.test(question.question)) {
+    const snippets = question.evidenceSnippets ?? [];
+    const hasConnectedScopes = new Set(snippets.map(questionEvidenceIdentity)).size > 1 && evidenceSnippetsConnected(snippets);
+    const hasTest = /\b(test|spec|assert|expect|pytest|unittest)\b/i.test(evidenceText);
+    const hasBranch = /\b(if|elif|else|match|switch|case)\b/.test(evidenceText);
+    const hasFailureOrReturn = /\b(try|except|catch|throw|raise|error|exception|fail|return)\b/i.test(evidenceText);
+    if (!(hasConnectedScopes || hasTest || (hasBranch && hasFailureOrReturn))) return true;
+  }
+  if (/연결\s*(흐름|관계)|어떻게\s*연결|요청\s*처리가.{0,20}이어|까지.{0,20}영향|영향이\s*이어|호출\s*(체인|흐름)|파일들을?\s*거쳐/.test(question.question)) {
+    const snippets = question.evidenceSnippets ?? [];
+    if (new Set(snippets.map((snippet) => snippet.path)).size > 1 && !evidenceSnippetsConnected(snippets)) return true;
+  }
+  const asksBroadScope = /전체|모든|어떤\s+데이터.{0,12}조합|어떤\s+제약|검증\s+제약/.test(question.question);
+  if (evidenceText.includes("... 이후 코드 생략 ...") && asksBroadScope) return true;
+  if (/프롬프트.{0,20}(데이터|조합|포함)|어떤\s+데이터.{0,20}프롬프트/.test(question.question)) {
+    if (!(/\bprompt\s*=|f?["']{3}|`/.test(evidenceText)
+      && /\{[^{}]+\}|\$\{[^{}]+\}/.test(evidenceText)
+      && /\b(if|match|switch|condition|조건)\b/i.test(evidenceText)
+      && /\breturn\b|call\w*\s*\(|provider\w*\s*\(/i.test(evidenceText))) return true;
+  }
+  if (/URL.{0,20}(검증|제약)|(?:검증|제약).{0,20}URL/i.test(question.question)) {
+    const categories = [
+      /(?:if|assert).{0,80}\bscheme\b|\bscheme\b.{0,40}(?:!=|==|not\s+in)/i,
+      /(?:if|assert).{0,80}\b(hostname|netloc)\b|\b(hostname|netloc)\b.{0,40}(?:!=|==|not\s+in)/i,
+      /(?:if|assert).{0,80}\b(path|startswith)\b|\bpath\b.{0,40}(?:!=|==|startswith|not\s+in)/i
+    ];
+    if (categories.filter((pattern) => pattern.test(evidenceText)).length < 2) return true;
+  }
+  return false;
+}
+
 function buildQuestionFromEvidence(question: UnderstandingQuestion, evidence: CodeEvidence[], index: number): UnderstandingQuestion {
   const type = question.type;
   const selected = selectEvidenceForType(type, evidence);
@@ -71,11 +109,11 @@ function buildQuestionFromEvidence(question: UnderstandingQuestion, evidence: Co
 
 function selectEvidenceForType(type: QuestionType, evidence: CodeEvidence[]): CodeEvidence[] {
   if (type === "요청 흐름") {
-    return selectLayered(
+    return connectedEvidenceSubset(selectLayered(
       evidence.filter((snippet) => !isConfigLikePath(snippet.path) && !isContractLikePath(snippet.path) && (supportsRequestFlowEvidence(snippet) || isRequestHelperEvidence(snippet))),
       ["entry", "service"],
       3
-    );
+    ));
   }
   if (type === "데이터 흐름") {
     const strongDataEvidence = evidence.filter(supportsStrongDataFlowEvidence);
@@ -89,11 +127,11 @@ function selectEvidenceForType(type: QuestionType, evidence: CodeEvidence[]): Co
         && !isMaintenanceLikePath(snippet.path)
         && snippet.kind !== "ui"
     );
-    return selectLayered(
+    return connectedEvidenceSubset(selectLayered(
       impactEvidence.length ? impactEvidence : evidence.filter((snippet) => !isConfigLikePath(snippet.path) && !isContractLikePath(snippet.path) && snippet.kind !== "ui"),
       ["service", "entry", "data"],
       3
-    );
+    ));
   }
   if (type === "면접형") {
     const interviewEvidence = evidence.filter(
@@ -106,13 +144,13 @@ function selectEvidenceForType(type: QuestionType, evidence: CodeEvidence[]): Co
     );
   }
   const structureEvidence = evidence.filter((snippet) => ["entry", "service", "ui"].includes(snippet.kind) && !isContractLikePath(snippet.path) && !isMaintenanceLikePath(snippet.path));
-  return selectLayered(structureEvidence.length ? structureEvidence : evidence, ["entry", "service", "ui", "config"], 2);
+  return connectedEvidenceSubset(selectLayered(structureEvidence.length ? structureEvidence : evidence, ["entry", "service", "ui", "config"], 2));
 }
 
 function buildQuestionText(type: QuestionType, primaryPath: string, secondaryPath: string): string {
   if (type === "요청 흐름") {
-    if (primaryPath !== secondaryPath) return `${primaryPath}가 ${secondaryPath}와 어떻게 연결되어 요청을 처리하는지 설명해주세요.`;
-    return `${primaryPath}는 요청 처리에서 어떤 역할을 담당하나요?`;
+    if (primaryPath !== secondaryPath) return `${primaryPath}에서 ${secondaryPath}로 요청 처리가 어떻게 이어지는지 설명해주세요.`;
+    return `${withKoreanParticle(primaryPath, "은", "는")} 요청 처리에서 어떤 역할을 담당하나요?`;
   }
   if (type === "데이터 흐름") {
     return `${primaryPath}에서 데이터 수집, 검증 또는 변환 흐름이 어떻게 드러나는지 설명해주세요.`;
@@ -125,7 +163,16 @@ function buildQuestionText(type: QuestionType, primaryPath: string, secondaryPat
     return `면접이나 코드리뷰에서 ${primaryPath}의 설계 의도와 위험 지점을 어떻게 설명하겠습니까?`;
   }
   if (primaryPath !== secondaryPath) return `${primaryPath}와 ${secondaryPath}의 역할과 연결 흐름을 설명해주세요.`;
-  return `${primaryPath}는 선택된 코드 흐름에서 어떤 역할을 담당하나요?`;
+  return `${withKoreanParticle(primaryPath, "은", "는")} 선택된 코드 흐름에서 어떤 역할을 담당하나요?`;
+}
+
+function withKoreanParticle(value: string, consonantParticle: string, vowelParticle: string): string {
+  const trimmed = value.trimEnd();
+  const last = trimmed.at(-1);
+  if (!last) return value;
+  const code = last.charCodeAt(0);
+  const hasFinalConsonant = code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0;
+  return `${trimmed}${hasFinalConsonant ? consonantParticle : vowelParticle}`;
 }
 
 function selectLayered(evidence: CodeEvidence[], layers: string[], limit: number): CodeEvidence[] {
@@ -140,6 +187,38 @@ function selectLayered(evidence: CodeEvidence[], layers: string[], limit: number
     if (selected.length >= limit) break;
   }
   return selected;
+}
+
+function connectedEvidenceSubset(snippets: CodeEvidence[]): CodeEvidence[] {
+  if (snippets.length <= 1) return snippets;
+  const selected = [snippets[0]];
+  const remaining = snippets.slice(1);
+  const connectedTokens = evidenceConnectionTokens(snippets[0]);
+  while (remaining.length) {
+    const connectedIndex = remaining.findIndex((snippet) => [...evidenceConnectionTokens(snippet)].some((token) => connectedTokens.has(token)));
+    if (connectedIndex < 0) break;
+    const [snippet] = remaining.splice(connectedIndex, 1);
+    const tokens = evidenceConnectionTokens(snippet);
+      selected.push(snippet);
+      tokens.forEach((token) => connectedTokens.add(token));
+  }
+  return selected;
+}
+
+function evidenceSnippetsConnected(snippets: CodeEvidence[]): boolean {
+  if (new Set(snippets.map((snippet) => snippet.path)).size <= 1) return true;
+  return connectedEvidenceSubset(snippets).length === snippets.length;
+}
+
+function evidenceConnectionTokens(snippet: CodeEvidence): Set<string> {
+  const text = `${snippet.title}\n${snippet.excerpt}`;
+  const calls = [...text.matchAll(/\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(/g)].map((match) => match[1].toLowerCase());
+  const routes = [...text.matchAll(/["'](\/[-A-Za-z0-9_/{}/.]{3,})["']/g)].map((match) => match[1].toLowerCase());
+  const imports = [...text.matchAll(/^\s*(?:import|from)\s+.*$/gm)].flatMap((match) => match[0].match(/\b[A-Za-z_][A-Za-z0-9_]{3,}\b/g) ?? []).map((token) => token.toLowerCase());
+  const scope = evidenceScopeTitle(snippet);
+  const stopWords = new Set(["function", "request", "response", "json", "fetch", "return", "str", "int", "list", "dict", "nextresponse", "import", "from"]);
+  const scopeTokens = /^[A-Za-z_][A-Za-z0-9_]{3,}$/.test(scope) ? [scope.toLowerCase()] : [];
+  return new Set([...calls, ...routes, ...imports, ...scopeTokens].filter((token) => !stopWords.has(token)));
 }
 
 function isOverbroadStructureQuestion(question: string): boolean {
@@ -168,6 +247,10 @@ function evidenceScopeTitle(snippet: CodeEvidence): string {
   if (snippet.title.includes("·")) return snippet.title.split("·").at(-1)?.trim() ?? "";
   if (snippet.path && snippet.title.startsWith(snippet.path)) return snippet.title.slice(snippet.path.length).replace(/^[\s·-]+/, "").trim();
   return snippet.title.trim();
+}
+
+function questionEvidenceIdentity(snippet: CodeEvidence): string {
+  return `${snippet.path}:${evidenceScopeTitle(snippet) || snippet.id}`;
 }
 
 function firstQuestionPath(question: UnderstandingQuestion): string | undefined {

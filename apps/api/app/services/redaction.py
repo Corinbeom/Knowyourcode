@@ -24,7 +24,7 @@ SENSITIVE_NAME_PATTERN = (
     r"(?:[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|"
     r"CLIENT[_-]?SECRET|AUTH[_-]?SECRET)[A-Z0-9_]*)"
 )
-SECRET_VALUE_PATTERN = r"(?:\"[^\"\n]*\"|'[^'\n]*'|`[^`\n]*`|[A-Za-z0-9_./:@+=-]{3,})"
+SECRET_VALUE_PATTERN = r"(?:\"[^\"\n]*\"|'[^'\n]*'|`[^`\n]*`|[A-Za-z0-9_./:@+=-]{3,}(?=\s*(?:[,}\]]|$|#|//)))"
 
 PRIVATE_KEY_PATTERN = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----")
 AUTHORIZATION_PATTERN = re.compile(r"\b(Authorization\s*[:=]\s*)(Bearer|Basic)\s+[\"']?[^\"'\s]+[\"']?", re.I)

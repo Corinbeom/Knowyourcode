@@ -102,7 +102,7 @@ function CommitAnalyzingContent() {
             <h1>{url}</h1>
             <div className="summary-chips">
               <span>커밋 단위 분석</span>
-              <span>질문 4개</span>
+              <span>질문 2~4개</span>
               <span>변경 영향도</span>
             </div>
           </div>
