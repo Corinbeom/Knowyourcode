@@ -340,12 +340,20 @@ def supports_request_flow_evidence(snippet: dict) -> bool:
     path = str(snippet.get("path") or "")
     kind = str(snippet.get("kind") or "")
     text = f"{path}\n{snippet.get('title', '')}\n{snippet.get('excerpt', '')}"
+    if is_route_config_scope(snippet):
+        return False
     if kind == "config" and re.search(r"package\.json|config|env|settings|docker", path, re.I):
         return False
     return bool(
         is_entrypoint_file(path)
         or re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]", text, re.I)
     )
+
+
+def is_route_config_scope(snippet: dict) -> bool:
+    title = str(snippet.get("title") or "")
+    scope = title.rsplit("·", 1)[-1].strip() if "·" in title else ""
+    return scope in {"runtime", "dynamic", "revalidate", "preferredRegion", "maxDuration", "fetchCache"}
 
 
 def supports_request_or_service_evidence(snippet: dict) -> bool:

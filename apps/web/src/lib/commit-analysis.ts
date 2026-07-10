@@ -5,6 +5,7 @@ const MAX_CONTEXT_FILES = 12;
 const MAX_PATCH_EXCERPT = 2_400;
 const MAX_EVIDENCE_SNIPPETS = 18;
 const MAX_HUNK_EXCERPT = 1_800;
+const OMITTED_AFTER_DIFF_MARKER = "... 이후 변경 내용 생략 ...";
 
 export type CommitStaticContext = {
   commit: CommitInfo;
@@ -113,9 +114,19 @@ function splitPatchHunks(file: CommitFileChange): Array<{ index: number; header:
       return {
         index,
         header: firstLine.startsWith("@@") ? firstLine : `파일 변경 ${index + 1}`,
-        excerpt: part.slice(0, MAX_HUNK_EXCERPT)
+        excerpt: truncateDiffExcerpt(part, MAX_HUNK_EXCERPT)
       };
     });
+}
+
+function truncateDiffExcerpt(content: string, limit: number): string {
+  if (content.length <= limit) return content;
+
+  const available = Math.max(0, limit - OMITTED_AFTER_DIFF_MARKER.length - 1);
+  const truncated = content.slice(0, available);
+  const lastNewline = truncated.lastIndexOf("\n");
+  const completeLines = lastNewline >= 0 ? truncated.slice(0, lastNewline) : truncated;
+  return `${completeLines.trimEnd()}\n${OMITTED_AFTER_DIFF_MARKER}`;
 }
 
 function buildCommitEvidenceSnippets(files: CommitFileChange[]): CodeEvidence[] {
@@ -193,7 +204,7 @@ function toCommitFileSummary(file: CommitFileChange): FileSummary {
   return {
     path: file.path,
     reason: inferCommitFileReason(file),
-    excerpt: `${header}\n${file.patch ? redactSecrets(file.patch).slice(0, MAX_PATCH_EXCERPT) : "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)"}`
+    excerpt: `${header}\n${file.patch ? truncateDiffExcerpt(redactSecrets(file.patch), MAX_PATCH_EXCERPT) : "(GitHub API에서 diff patch를 제공하지 않는 파일입니다.)"}`
   };
 }
 

@@ -320,9 +320,15 @@ function supportsRequestOrServiceEvidence(snippet: CodeEvidence): boolean {
 
 function supportsRequestFlowEvidence(snippet: CodeEvidence): boolean {
   const text = `${snippet.path}\n${snippet.title}\n${snippet.excerpt}`;
+  if (isRouteConfigScope(snippet)) return false;
   if (snippet.kind === "config" && /package\.json|config|env|settings|docker/i.test(snippet.path)) return false;
   return /route|router|controller|handler|endpoint|api\//i.test(snippet.path)
     || /\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]/i.test(text);
+}
+
+function isRouteConfigScope(snippet: CodeEvidence): boolean {
+  const scope = snippet.title.includes("·") ? snippet.title.split("·").at(-1)?.trim() ?? "" : "";
+  return ["runtime", "dynamic", "revalidate", "preferredRegion", "maxDuration", "fetchCache"].includes(scope);
 }
 
 function isRequestHelperEvidence(snippet: CodeEvidence): boolean {

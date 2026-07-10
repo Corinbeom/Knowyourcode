@@ -297,6 +297,7 @@ function CodeExcerpt({ excerpt }: { excerpt: string }) {
 }
 
 function codeLineClass(line: string): string {
+  if (line.includes("변경 내용 생략")) return "is-omitted";
   if (line.startsWith("@@")) return "is-hunk";
   if (line.startsWith("+") && !line.startsWith("+++")) return "is-added";
   if (line.startsWith("-") && !line.startsWith("---")) return "is-removed";

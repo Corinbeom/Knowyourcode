@@ -606,6 +606,8 @@ def is_repo_question_evidence_aligned(question: dict, all_evidence: list[dict]) 
             return False
         if not any(supports_request_flow_evidence(snippet) for snippet in snippets):
             return False
+        if any(is_route_config_scope(snippet) for snippet in snippets):
+            return False
         if "entry" in available_kinds and "entry" not in kinds:
             return False
         if has_multi_layer_repo_evidence(all_evidence, {"entry", "service", "config"}) and len(paths) < 2:
@@ -686,6 +688,7 @@ def select_repo_evidence_for_question(question: dict, evidence_snippets: list[di
             snippet
             for snippet in select_evidence_for_question(question, evidence_snippets)
             if any(path_matches(snippet.get("path", ""), path) for path in explicit_paths)
+            and not (question.get("type") == "요청 흐름" and is_route_config_scope(snippet))
         ]
         symbol_title_matches = [
             snippet
@@ -1007,12 +1010,20 @@ def supports_request_flow_evidence(snippet: dict) -> bool:
     path = str(snippet.get("path") or "")
     kind = str(snippet.get("kind") or "")
     text = f"{path}\n{snippet.get('title', '')}\n{snippet.get('excerpt', '')}"
+    if is_route_config_scope(snippet):
+        return False
     if kind == "config" and re.search(r"package\.json|config|env|settings|docker", path, re.I):
         return False
     return bool(
         is_entrypoint_path(path)
         or re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\b|\b(APIRouter|FastAPI)\s*\(|\b(fetch\w*|urlopen|axios|NextRequest|NextResponse)\b|request\s*[:.]|response\s*[:.]", text, re.I)
     )
+
+
+def is_route_config_scope(snippet: dict) -> bool:
+    title = str(snippet.get("title") or "")
+    scope = title.rsplit("·", 1)[-1].strip() if "·" in title else ""
+    return scope in {"runtime", "dynamic", "revalidate", "preferredRegion", "maxDuration", "fetchCache"}
 
 
 def is_request_helper_evidence(snippet: dict) -> bool:
