@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@vercel/analytics";
 import { loadAnalysisSetup, saveAnalysisResult, type AnalysisSetup } from "@/lib/analysis-session";
+import { repoAnalysisTitle } from "@/lib/analysis-display";
 
 const ANALYSIS_STEPS = [
   {
@@ -111,7 +112,8 @@ export default function AnalyzingPage() {
           </div>
           <div>
             <p className="section-label">분석 설정</p>
-            <h1>{setup.url}</h1>
+            <h1 className="analysis-source-title">{repoAnalysisTitle(setup.url)}</h1>
+            <p className="analysis-source-url" title={setup.url}>{setup.url}</p>
             <div className="summary-chips">
               <span>{formatFocusLabel(setup.focus)}</span>
               <span>{formatQuestionLevelLabel(setup.questionLevel)}</span>
