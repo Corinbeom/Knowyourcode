@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from app.observability import scrub_sentry_event
+from app.config import deployment_commit_sha
 from app.api.evaluation import validate_analysis_payload
 from app.security import validate_runtime_config
 from app.services.evaluation import normalize_quiz_evaluation
@@ -13,6 +14,10 @@ from app.services.repo_analysis import build_repo_static_context
 
 
 class RedactionTest(unittest.TestCase):
+    @patch.dict(os.environ, {"COMMIT_SHA": "abc123", "RENDER_GIT_COMMIT": "older"}, clear=False)
+    def test_deployment_commit_sha_uses_explicit_override(self):
+        self.assertEqual(deployment_commit_sha(), "abc123")
+
     def test_redacts_secret_like_values_without_removing_normal_code(self):
         content = "\n".join(
             [

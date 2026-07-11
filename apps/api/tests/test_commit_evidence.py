@@ -59,6 +59,73 @@ class CommitEvidenceTest(unittest.TestCase):
         self.assertNotIn("process_commit_con\n", hunk["excerpt"])
         self.assertTrue(all(line == long_line or line.startswith("@@") or "변경 내용 생략" in line for line in hunk["excerpt"].splitlines()))
 
+    def test_commit_evidence_uses_function_scope_and_starts_at_declaration(self):
+        snippets = build_commit_evidence_snippets([
+            {
+                "path": "src/lib/ai.ts",
+                "status": "modified",
+                "additions": 2,
+                "deletions": 0,
+                "changes": 2,
+                "patch": (
+                    "@@ -10,4 +10,5 @@ function normalizeCommitChangedFiles(input) {\n"
+                    "   const previousContext = true;\n"
+                    "+  if (!input) return [];\n"
+                    "   return input;"
+                ),
+            }
+        ])
+
+        self.assertEqual(snippets[0]["title"], "src/lib/ai.ts · normalizeCommitChangedFiles")
+        self.assertTrue(snippets[0]["excerpt"].startswith("function normalizeCommitChangedFiles"))
+        self.assertNotIn("@@ -10", snippets[0]["excerpt"])
+
+    def test_changed_function_declaration_beats_previous_hunk_context(self):
+        snippets = build_commit_evidence_snippets([
+            {
+                "path": "src/lib/ai.ts",
+                "status": "modified",
+                "additions": 3,
+                "deletions": 0,
+                "changes": 3,
+                "patch": (
+                    "@@ -10,4 +10,8 @@ function normalizeKeyFiles(input) {\n"
+                    "   return input;\n"
+                    "+function normalizeCommitChangedFiles(files) {\n"
+                    "+  if (!files) return [];\n"
+                    "+}"
+                ),
+            }
+        ])
+
+        self.assertEqual(snippets[0]["title"], "src/lib/ai.ts · normalizeCommitChangedFiles")
+        self.assertTrue(snippets[0]["excerpt"].startswith("+function normalizeCommitChangedFiles"))
+        self.assertNotIn("normalizeKeyFiles", snippets[0]["excerpt"])
+
+    def test_normal_branch_test_question_is_rewritten_without_exception_scope(self):
+        evidence = {
+            "id": "normalize",
+            "path": "src/lib/ai.ts",
+            "title": "src/lib/ai.ts · normalizeCommitChangedFiles",
+            "reason": "정상 분기 변경",
+            "excerpt": "function normalizeCommitChangedFiles(input) { if (!input) return []; return input; }",
+            "kind": "modified",
+            "quality": "strong",
+        }
+        question = {
+            "id": "q3",
+            "type": "테스트/리스크",
+            "question": "normalizeCommitChangedFiles 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?",
+            "relatedFiles": ["src/lib/ai.ts"],
+            "evidenceSnippets": [evidence],
+        }
+
+        guarded = enforce_commit_question_quality([question], [question], [evidence])
+
+        self.assertNotIn("예외 케이스", guarded[0]["question"])
+        self.assertIn("정상 분기와 반환 동작", guarded[0]["question"])
+        self.assertIn("normalizeCommitChangedFiles", guarded[0]["question"])
+
     def test_patchless_file_does_not_create_question_evidence(self):
         snippets = build_commit_evidence_snippets(
             [
