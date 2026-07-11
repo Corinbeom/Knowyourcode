@@ -696,6 +696,17 @@ export async function evaluateCommitQuiz(input: {
   return evaluateQuizWithPrompt(prompt, fallback, input.analysis.questions);
 }
 
+// Keep stale backend deployments from overriding deterministic evidence decisions.
+export function requiresLocalQuizEvaluation(
+  analysis: AnalysisResult | CommitAnalysisResult,
+  answers: QuizAnswer[]
+): boolean {
+  return analysis.questions.some((question) => {
+    const answer = answers.find((item) => item.questionId === question.id)?.answer.trim() ?? "";
+    return classifyAnswer(answer) === "question_challenge" && Boolean(invalidQuestionReason(question, answer));
+  });
+}
+
 function buildQuizEvaluationPrompt(input: {
   title: string;
   summaryLabel: string;
