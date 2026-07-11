@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { track } from "@vercel/analytics";
 import { saveCommitAnalysisResult } from "@/lib/analysis-session";
+import { commitAnalysisTitle } from "@/lib/analysis-display";
 
 const ANALYSIS_STEPS = [
   ["커밋 diff 읽는 중", "GitHub commit metadata와 변경 파일을 가져옵니다."],
@@ -99,7 +100,8 @@ function CommitAnalyzingContent() {
           </div>
           <div>
             <p className="section-label">Commit Mode</p>
-            <h1>{url}</h1>
+            <h1 className="analysis-source-title">{commitAnalysisTitle(url)}</h1>
+            <p className="analysis-source-url" title={url}>{url}</p>
             <div className="summary-chips">
               <span>커밋 단위 분석</span>
               <span>질문 2~4개</span>

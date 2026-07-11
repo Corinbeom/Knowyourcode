@@ -91,6 +91,10 @@ export function clearCommitQuizSession() {
   window.sessionStorage.removeItem(COMMIT_QUIZ_KEY);
 }
 
+export function upsertQuizAnswer(answers: QuizAnswer[], questionId: string, answer: string): QuizAnswer[] {
+  return [...answers.filter((item) => item.questionId !== questionId), { questionId, answer }];
+}
+
 function parseJson<T>(raw: string | null): T | null {
   if (!raw) return null;
   try {

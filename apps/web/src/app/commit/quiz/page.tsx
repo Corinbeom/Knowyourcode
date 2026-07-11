@@ -7,6 +7,7 @@ import {
   loadCommitAnalysisResult,
   loadCommitQuizSession,
   saveCommitQuizSession,
+  upsertQuizAnswer,
   type QuizSession
 } from "@/lib/analysis-session";
 import type { CodeEvidence, CommitAnalysisResult, QuizAnswer, QuizEvaluationResult } from "@/lib/types";
@@ -61,7 +62,7 @@ export default function CommitQuizPage() {
   }
 
   function upsertAnswer(questionId: string, value: string): QuizAnswer[] {
-    return [...answers.filter((answer) => answer.questionId !== questionId), { questionId, answer: value }];
+    return upsertQuizAnswer(answers, questionId, value);
   }
 
   function moveTo(index: number, nextAnswers = answers) {
@@ -189,7 +190,11 @@ export default function CommitQuizPage() {
                   id="commitQuizAnswer"
                   value={answerDraft}
                   onChange={(event) => {
-                    setAnswerDraft(event.target.value);
+                    const value = event.target.value;
+                    const nextAnswers = upsertAnswer(currentQuestion.id, value);
+                    setAnswerDraft(value);
+                    setAnswers(nextAnswers);
+                    persist({ answers: nextAnswers });
                     if (quizState === "error") {
                       setQuizState("answering");
                       setError("");
