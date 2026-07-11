@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 try:
@@ -18,3 +19,11 @@ def load_environment() -> None:
     ]:
         if env_file.exists():
             load_dotenv(env_file, override=False)
+
+
+def deployment_commit_sha() -> str:
+    for name in ["COMMIT_SHA", "RENDER_GIT_COMMIT", "RAILWAY_GIT_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA"]:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return "unknown"

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.config import load_environment
+from app.config import deployment_commit_sha, load_environment
 
 load_environment()
 
@@ -31,4 +31,4 @@ app.include_router(quota_router)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "commitSha": deployment_commit_sha()}

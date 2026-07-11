@@ -37,8 +37,8 @@ def build_fallback_commit_analysis(context: dict) -> dict:
     question_count = min(4, len(question_evidence))
     selected_evidence = question_evidence[:question_count]
     fallback_evidence = (selected_evidence + [selected_evidence[-1]] * 4)[:4]
-    question_paths = [item["path"] for item in fallback_evidence]
-    first_path, second_path, third_path, fourth_path = (question_paths + [question_paths[-1]] * 4)[:4]
+    question_subjects = [commit_evidence_subject(item) for item in fallback_evidence]
+    first_path, second_path, third_path, fourth_path = (question_subjects + [question_subjects[-1]] * 4)[:4]
 
     return {
         "commit": context["commit"],
@@ -80,7 +80,7 @@ def build_fallback_commit_analysis(context: dict) -> dict:
             {
                 "id": "q3",
                 "type": "테스트/리스크",
-                "question": f"{third_path} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?",
+                "question": f"{third_path}의 정상 분기와 반환 동작을 검증하려면 어떤 입력과 결과를 확인해야 하나요?",
                 "relatedFiles": [third_path],
                 "evidenceSnippets": compact_evidence_list([fallback_evidence[2]]),
             },
@@ -177,12 +177,14 @@ def to_code_evidence(file: dict, hunk: dict | None) -> dict:
     hunk_index = hunk["index"] if hunk else 0
     header = hunk["header"] if hunk else "patch unavailable"
     excerpt = hunk["excerpt"] if hunk else fallback_evidence_excerpt(file)
+    scope = commit_hunk_scope(header, excerpt)
+    excerpt = normalize_commit_hunk_excerpt(header, excerpt)
     reason = infer_commit_file_reason(file)
 
     return {
         "id": f"{sanitize_evidence_id(path)}:{hunk_index}",
         "path": path,
-        "title": f"{path} {header}",
+        "title": f"{path} · {scope or f'hunk {hunk_index + 1}'}",
         "reason": reason,
         "excerpt": excerpt,
         "kind": change_type,
@@ -190,6 +192,75 @@ def to_code_evidence(file: dict, hunk: dict | None) -> dict:
         "quality": classify_commit_evidence(path, header, excerpt),
         "score": score_commit_file(file) + score_hunk_text(excerpt),
     }
+
+
+def commit_evidence_subject(snippet: dict) -> str:
+    path = str(snippet.get("path") or "변경 파일")
+    title = str(snippet.get("title") or "")
+    scope = title.split("·", 1)[1].strip() if "·" in title else ""
+    return f"{path}의 {scope}" if scope else path
+
+
+def commit_hunk_scope(header: str, excerpt: str) -> str:
+    header_context = header.split("@@", 2)[-1].strip() if header.startswith("@@") else ""
+    _, scope = select_hunk_declaration(excerpt.splitlines(), header_context)
+    return scope
+
+
+def normalize_commit_hunk_excerpt(header: str, excerpt: str) -> str:
+    lines = excerpt.splitlines()
+    body = lines[1:] if lines and lines[0].startswith("@@") else lines
+    header_context = header.split("@@", 2)[-1].strip() if header.startswith("@@") else ""
+    index, scope = select_hunk_declaration(body, header_context)
+    if index is not None:
+        return "\n".join(body[index:]).strip()
+    if scope:
+        return "\n".join([header_context, *body]).strip()
+    return excerpt
+
+
+def select_hunk_declaration(lines: list[str], header_context: str) -> tuple[int | None, str]:
+    callables = [(index, declaration_scope(line)) for index, line in enumerate(lines) if declaration_kind(line) == "callable"]
+    changed_callables = [(index, scope) for index, scope in callables if lines[index].startswith(("+", "-"))]
+    if changed_callables:
+        return changed_callables[0]
+
+    if callables:
+        ranked = []
+        for position, (index, scope) in enumerate(callables):
+            end = callables[position + 1][0] if position + 1 < len(callables) else len(lines)
+            changed_count = sum(
+                1 for line in lines[index:end]
+                if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+            )
+            ranked.append((changed_count, position, index, scope))
+        _, _, index, scope = max(ranked)
+        return index, scope
+
+    changed_declarations = [
+        (index, declaration_scope(line))
+        for index, line in enumerate(lines)
+        if line.startswith(("+", "-")) and declaration_scope(line)
+    ]
+    if changed_declarations:
+        return changed_declarations[0]
+    return None, declaration_scope(header_context)
+
+
+def declaration_scope(line: str) -> str:
+    code = re.sub(r"^[ +\-]", "", line).strip()
+    match = re.search(
+        r"(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|"
+        r"\bdef\s+([A-Za-z_]\w*)|\bclass\s+([A-Za-z_]\w*)|"
+        r"(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=",
+        code,
+    )
+    return next((group for group in match.groups() if group), "") if match else ""
+
+
+def declaration_kind(line: str) -> str:
+    code = re.sub(r"^[ +\-]", "", line).strip()
+    return "callable" if re.search(r"(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+[A-Za-z_$]|\b(?:def|class)\s+[A-Za-z_]", code) else "value"
 
 
 def classify_commit_evidence(path: str, header: str, excerpt: str) -> str:

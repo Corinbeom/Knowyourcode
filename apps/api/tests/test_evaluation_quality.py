@@ -113,8 +113,8 @@ class EvaluationQualityTest(unittest.TestCase):
         parsed = {
             "summary": "parsed",
             "strengths": ["코드 분석 범위의 한계를 이해했습니다."],
-            "weaknesses": [],
-            "reviewFiles": [],
+            "weaknesses": ["Q4에서 제공된 코드의 맥락을 과소평가하여 답변을 회피했습니다."],
+            "reviewFiles": ["lib/ai.ts"],
             "questionEvaluations": [
                 {"questionId": "q1", "score": 70, "scoreReason": "ok", "understood": ["POST 흐름"]},
                 {"questionId": "q4", "score": 85, "scoreReason": "안정", "understood": ["제공된 정보의 범위"]},
@@ -134,6 +134,81 @@ class EvaluationQualityTest(unittest.TestCase):
         self.assertEqual([item["questionId"] for item in graded], ["q1"])
         self.assertEqual(min(graded, key=lambda item: item["score"])["questionId"], "q1")
         self.assertNotIn("제공된 정보의 범위", result["strengths"])
+        self.assertFalse(any("Q4" in item for item in result["weaknesses"]))
+        self.assertNotIn("lib/ai.ts", result["reviewFiles"])
+
+    def test_normal_branch_and_return_do_not_prove_regression_scope(self):
+        question = {
+            "id": "q4",
+            "type": "리뷰형",
+            "question": "buildFallbackCommitQuizEvaluation의 폴백 로직이 실제 LLM 평가를 대체하기에 충분한가요?",
+            "relatedFiles": ["lib/ai.ts"],
+            "evidenceSnippets": [{
+                "id": "ai:fallback",
+                "path": "lib/ai.ts",
+                "title": "lib/ai.ts · buildFallbackCommitQuizEvaluation",
+                "reason": "정상 fallback 평가 생성 과정",
+                "excerpt": (
+                    "function buildFallbackCommitQuizEvaluation(analysis, answers) {\n"
+                    "  if (!analysis.questions.length) return emptyEvaluation();\n"
+                    "  const evaluations = analysis.questions.map(buildFallbackEvaluation);\n"
+                    "  return { averageScore: average(evaluations), questionEvaluations: evaluations };\n"
+                    "}"
+                ),
+                "kind": "service",
+                "quality": "strong",
+            }],
+        }
+        answer = "제공된 코드에는 호출부와 결과 소비부가 없어 회귀 위험을 판단할 수 없습니다."
+
+        self.assertEqual(classify_answer(answer), "question_challenge")
+        self.assertIn("회귀 위험", invalid_question_reason(question, answer))
+        result = build_fallback_quiz_evaluation({"questions": [question], "contextFiles": []}, [{"questionId": "q4", "answer": answer}], True)
+        self.assertEqual(result["questionEvaluations"][0]["evaluationStatus"], "invalid_question")
+        self.assertEqual(result["strengths"], [])
+
+    def test_regression_scope_accepts_connected_test_or_failure_evidence(self):
+        base = {
+            "question": "이 변경의 회귀 위험을 어떻게 설명하나요?",
+            "evidenceSnippets": [],
+        }
+        test_question = {**base, "evidenceSnippets": [{"excerpt": "def test_fallback():\n    assert evaluate() == expected"}]}
+        failure_question = {**base, "evidenceSnippets": [{"excerpt": "try:\n    return evaluate()\nexcept ValueError:\n    raise HTTPException(status_code=400)"}]}
+        connected_question = {**base, "evidenceSnippets": [
+            {"id": "caller", "path": "route.ts", "title": "route.ts · POST", "excerpt": "function POST() { return evaluate(); }"},
+            {"id": "callee", "path": "evaluation.ts", "title": "evaluation.ts · evaluate", "excerpt": "function evaluate() { return result; }"},
+        ]}
+
+        self.assertIsNone(question_capability_gap(test_question))
+        self.assertIsNone(question_capability_gap(failure_question))
+        self.assertIsNone(question_capability_gap(connected_question))
+
+    def test_valid_regression_challenge_is_graded_low_without_strengths(self):
+        question = {
+            "id": "q4",
+            "type": "테스트/리스크",
+            "question": "실패 경로와 회귀 위험을 어떻게 설명하나요?",
+            "relatedFiles": ["route.ts"],
+            "evidenceSnippets": [{
+                "id": "route-error",
+                "path": "route.ts",
+                "title": "route.ts · POST",
+                "reason": "명시적 실패 처리",
+                "excerpt": "try { return run(); } catch (error) { throw new HTTPException(413); }",
+                "kind": "modified",
+                "quality": "strong",
+            }],
+        }
+        answer = "제공된 코드에는 호출부와 결과 소비부가 없어 회귀 위험을 판단할 수 없습니다."
+
+        result = build_fallback_quiz_evaluation({"questions": [question], "contextFiles": []}, [{"questionId": "q4", "answer": answer}], True)
+        evaluation = result["questionEvaluations"][0]
+
+        self.assertEqual(evaluation["evaluationStatus"], "graded")
+        self.assertEqual(evaluation["answerType"], "question_challenge")
+        self.assertLessEqual(evaluation["score"], 20)
+        self.assertEqual(evaluation["understood"], [])
+        self.assertEqual(result["strengths"], [])
 
     def test_valid_question_dont_know_remains_insufficient(self):
         question = strong_question()
