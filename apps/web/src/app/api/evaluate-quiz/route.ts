@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { evaluateQuiz } from "@/lib/ai";
+import { evaluateQuiz, requiresLocalQuizEvaluation } from "@/lib/ai";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { payloadTooLargeResponse, readEvaluationJson, validateEvaluationAnalysis } from "@/lib/evaluation-payload";
 import { consumeRateLimit } from "@/lib/rate-limit";
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     const backendAuth = await getBackendAuth();
     if (backendAuth instanceof Response) return backendAuth;
 
-    const proxied = await proxyEvaluation("evaluate-quiz", {
+    const proxied = requiresLocalQuizEvaluation(body.analysis, answers) ? null : await proxyEvaluation("evaluate-quiz", {
       analysis: body.analysis,
       answers
     }, backendAuth);
