@@ -64,7 +64,7 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
   const questionCount = Math.min(4, questionEvidence.length);
   const selectedEvidence = questionEvidence.slice(0, questionCount);
   const fallbackEvidence = [...selectedEvidence, ...Array(4).fill(selectedEvidence.at(-1))].slice(0, 4) as CodeEvidence[];
-  const [firstPath, secondPath, thirdPath, fourthPath] = fallbackEvidence.map((snippet) => snippet.path);
+  const [firstPath, secondPath, thirdPath, fourthPath] = fallbackEvidence.map(commitEvidenceSubject);
 
   return {
     commit: context.commit,
@@ -105,7 +105,7 @@ export function buildFallbackCommitAnalysis(context: CommitStaticContext): Commi
       {
         id: "q3",
         type: "테스트/리스크" as const,
-        question: `${thirdPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`,
+        question: `${thirdPath}의 정상 분기와 반환 동작을 검증하려면 어떤 입력과 결과를 확인해야 하나요?`,
         relatedFiles: [thirdPath],
         evidenceSnippets: compactEvidenceList([fallbackEvidence[2]])
       },
@@ -160,16 +160,72 @@ function toCodeEvidence(
   hunk: { index: number; header: string; excerpt: string } | null
 ): CodeEvidence {
   const header = hunk?.header ?? "patch unavailable";
-  const excerpt = hunk?.excerpt ?? fallbackEvidenceExcerpt(file);
+  const rawExcerpt = hunk?.excerpt ?? fallbackEvidenceExcerpt(file);
+  const scope = commitHunkScope(header, rawExcerpt);
+  const excerpt = normalizeCommitHunkExcerpt(header, rawExcerpt);
   return {
     id: `${sanitizeEvidenceId(file.path)}:${hunk?.index ?? 0}`,
     path: file.path,
-    title: `${file.path} ${header}`,
+    title: `${file.path} · ${scope || `hunk ${(hunk?.index ?? 0) + 1}`}`,
     reason: inferCommitFileReason(file),
     excerpt,
     kind: file.status,
     quality: classifyCommitEvidence(file.path, header, excerpt)
   };
+}
+
+function commitEvidenceSubject(snippet: CodeEvidence): string {
+  const scope = snippet.title.includes("·") ? snippet.title.split("·").at(-1)?.trim() : "";
+  return scope ? `${snippet.path}의 ${scope}` : snippet.path;
+}
+
+function commitHunkScope(header: string, excerpt: string): string {
+  const headerContext = header.startsWith("@@") ? header.split("@@").at(-1)?.trim() ?? "" : "";
+  return selectHunkDeclaration(excerpt.split("\n"), headerContext).scope;
+}
+
+function normalizeCommitHunkExcerpt(header: string, excerpt: string): string {
+  const lines = excerpt.split("\n");
+  const body = lines[0]?.startsWith("@@") ? lines.slice(1) : lines;
+  const headerContext = header.startsWith("@@") ? header.split("@@").at(-1)?.trim() ?? "" : "";
+  const selected = selectHunkDeclaration(body, headerContext);
+  if (selected.index !== null) return body.slice(selected.index).join("\n").trim();
+  if (selected.scope) return [headerContext, ...body].join("\n").trim();
+  return excerpt;
+}
+
+function selectHunkDeclaration(lines: string[], headerContext: string): { index: number | null; scope: string } {
+  const callables = lines
+    .map((line, index) => ({ index, scope: declarationScope(line), kind: declarationKind(line), changed: /^[+-]/.test(line) }))
+    .filter((item) => item.kind === "callable");
+  const changedCallable = callables.find((item) => item.changed);
+  if (changedCallable) return changedCallable;
+
+  if (callables.length) {
+    return callables
+      .map((item, position) => {
+        const end = callables[position + 1]?.index ?? lines.length;
+        const changedCount = lines.slice(item.index, end).filter((line) => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line)).length;
+        return { ...item, changedCount, position };
+      })
+      .sort((a, b) => b.changedCount - a.changedCount || b.position - a.position)[0];
+  }
+
+  const changedDeclaration = lines
+    .map((line, index) => ({ index, scope: declarationScope(line), changed: /^[+-]/.test(line) }))
+    .find((item) => item.changed && item.scope);
+  return changedDeclaration ?? { index: null, scope: declarationScope(headerContext) };
+}
+
+function declarationScope(line: string): string {
+  const code = line.replace(/^[ +\-]/, "").trim();
+  const match = code.match(/(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|\bdef\s+([A-Za-z_]\w*)|\bclass\s+([A-Za-z_]\w*)|(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
+  return match?.slice(1).find(Boolean) ?? "";
+}
+
+function declarationKind(line: string): "callable" | "value" {
+  const code = line.replace(/^[ +\-]/, "").trim();
+  return /(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+[A-Za-z_$]|\b(?:def|class)\s+[A-Za-z_]/.test(code) ? "callable" : "value";
 }
 
 function classifyCommitEvidence(path: string, header: string, excerpt: string): "strong" | "conditional" | "weak" {

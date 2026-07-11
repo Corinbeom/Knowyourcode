@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { evaluateCommitQuiz, requiresLocalQuizEvaluation } from "@/lib/ai";
+import { enforceDeterministicQuizGuards, evaluateCommitQuiz } from "@/lib/ai";
 import { authErrorResponse, requireBackendAuth, type BackendAuth } from "@/lib/backend-auth";
 import { payloadTooLargeResponse, readEvaluationJson, validateEvaluationAnalysis } from "@/lib/evaluation-payload";
 import { consumeRateLimit } from "@/lib/rate-limit";
@@ -55,10 +55,10 @@ export async function POST(request: Request) {
     const backendAuth = await getBackendAuth();
     if (backendAuth instanceof Response) return backendAuth;
 
-    const proxied = requiresLocalQuizEvaluation(body.analysis, answers) ? null : await proxyEvaluation("evaluate-commit-quiz", {
+    const proxied = await proxyEvaluation("evaluate-commit-quiz", {
       analysis: body.analysis,
       answers
-    }, backendAuth);
+    }, backendAuth, body.analysis, answers);
     if (proxied) return proxied;
 
     const rateLimit = consumeRateLimit(request, {
@@ -86,7 +86,13 @@ export async function POST(request: Request) {
   }
 }
 
-async function proxyEvaluation(path: string, body: unknown, backendAuth: BackendAuth): Promise<NextResponse | null> {
+async function proxyEvaluation(
+  path: string,
+  body: unknown,
+  backendAuth: BackendAuth,
+  analysis: CommitAnalysisResult,
+  answers: QuizAnswer[]
+): Promise<NextResponse | null> {
   const backendUrl = backendApiUrl();
   if (!backendUrl) return null;
 
@@ -104,7 +110,10 @@ async function proxyEvaluation(path: string, body: unknown, backendAuth: Backend
     return NextResponse.json({ error: message }, { status: response.status });
   }
 
-  return NextResponse.json({ ...data, limits: { backend: data.limits } });
+  const guardedEvaluation = data.evaluation
+    ? enforceDeterministicQuizGuards(data.evaluation, analysis, answers)
+    : data.evaluation;
+  return NextResponse.json({ ...data, evaluation: guardedEvaluation, limits: { backend: data.limits } });
 }
 
 async function getBackendAuth(): Promise<BackendAuth | Response> {

@@ -347,6 +347,8 @@ function buildQuestionDisplay(question: string, snippets: CodeEvidence[]): { que
 
 function snippetButtonLabel(snippet: CodeEvidence, snippets: CodeEvidence[], index: number): string {
   const base = shortPathLabel(snippet.path || snippet.title || "관련 파일");
+  const scope = snippet.title.includes("·") ? snippet.title.split("·").at(-1)?.trim() : "";
+  if (scope) return `${base} · ${scope}`;
   const duplicateCount = snippets.filter((item) => item.path === snippet.path).length;
   if (duplicateCount <= 1) return base;
   const occurrence = snippets.slice(0, index + 1).filter((item) => item.path === snippet.path).length;

@@ -25,6 +25,8 @@ def evaluate_answer(analysis: dict, question_id: str, answer: str) -> dict:
     fallback = build_fallback_evaluation(answer, fallback_related_paths, question)
     if answer_type == "insufficient":
         return build_insufficient_evaluation(question, answer)
+    if answer_type == "question_challenge":
+        return build_valid_challenge_evaluation(question)
 
     prompt = f"""You are KnowYourCode, evaluating whether a user understands their own code.
 Evaluate in Korean and return JSON only.
@@ -260,6 +262,8 @@ def build_fallback_quiz_evaluation(analysis: dict, answers: list[dict], commit_m
             question_evaluations.append({"questionId": question.get("id"), **build_invalid_question_evaluation(question, invalid_reason)})
         elif answer_type == "insufficient":
             question_evaluations.append({"questionId": question.get("id"), **build_insufficient_evaluation(question, answer)})
+        elif answer_type == "question_challenge":
+            question_evaluations.append({"questionId": question.get("id"), **build_valid_challenge_evaluation(question)})
         else:
             question_evaluations.append({"questionId": question.get("id"), **build_fallback_evaluation(answer, question_related_paths(question), question)})
     graded = [item for item in question_evaluations if item.get("evaluationStatus", "graded") == "graded"]
@@ -298,6 +302,10 @@ def normalize_evaluation(value: object, fallback: dict, score_divisor: int | Non
         normalized["score"] = min(normalized["score"], 10)
         normalized["understood"] = []
         normalized["scoreReason"] = "코드 이해 근거가 드러나지 않아 낮게 평가했습니다."
+    elif normalized["answerType"] == "question_challenge":
+        normalized["score"] = min(normalized["score"], 20)
+        normalized["understood"] = []
+        normalized["scoreReason"] = "문항 근거는 유효하지만 답변에서 요구한 코드 동작을 설명하지 않아 제한적으로 평가했습니다."
     return ensure_evidence_grounded_feedback(normalized, fallback)
 
 
@@ -331,8 +339,8 @@ def normalize_quiz_evaluation(value: object, fallback: dict, questions: list[dic
         "averageScore": clamp_score(average_score),
         "summary": str(value.get("summary") or fallback["summary"]),
         "strengths": collect_strengths(question_evaluations),
-        "weaknesses": normalize_string_array(value.get("weaknesses"), fallback["weaknesses"]),
-        "reviewFiles": normalize_string_array(value.get("reviewFiles"), fallback["reviewFiles"]),
+        "weaknesses": collect_weaknesses(question_evaluations),
+        "reviewFiles": collect_review_files(question_evaluations),
         "questionEvaluations": question_evaluations,
     }
 
@@ -443,6 +451,17 @@ def build_invalid_question_evaluation(question: dict, reason: str) -> dict:
     }
 
 
+def build_valid_challenge_evaluation(question: dict) -> dict:
+    evaluation = build_insufficient_evaluation(question, "")
+    return {
+        **evaluation,
+        "score": 10,
+        "scoreReason": "문항 근거는 유효하지만 답변에서 요구한 코드 동작을 설명하지 않아 제한적으로 평가했습니다.",
+        "missing": ["제공된 evidence의 조건, 호출, 반환 또는 실패 동작을 직접 설명해야 합니다."],
+        "answerType": "question_challenge",
+    }
+
+
 def build_insufficient_evaluation(question: dict, answer: str) -> dict:
     paths = question_related_paths(question)
     return {
@@ -471,6 +490,10 @@ def apply_answer_type_limits(evaluation: dict, answer_type: str, question: dict)
         evaluation["score"] = min(evaluation["score"], 10)
         evaluation["understood"] = []
         evaluation["scoreReason"] = "코드 이해 근거가 드러나지 않아 낮게 평가했습니다."
+    elif answer_type == "question_challenge":
+        evaluation["score"] = min(evaluation["score"], 20)
+        evaluation["understood"] = []
+        evaluation["scoreReason"] = "문항 근거는 유효하지만 답변에서 요구한 코드 동작을 설명하지 않아 제한적으로 평가했습니다."
     return ensure_evidence_grounded_feedback(evaluation, {"reviewCode": question_related_paths(question), "evidenceReferences": question_evidence_references(question)})
 
 
@@ -523,7 +546,26 @@ def ensure_evidence_grounded_feedback(evaluation: dict, fallback: dict) -> dict:
 def collect_strengths(question_evaluations: list[dict]) -> list[str]:
     strengths = []
     for item in question_evaluations:
-        if item.get("evaluationStatus", "graded") != "graded" or item.get("answerType") == "insufficient":
+        if item.get("evaluationStatus", "graded") != "graded" or item.get("answerType") != "substantive":
             continue
         strengths.extend(item.get("understood", []))
     return list(dict.fromkeys(strength for strength in strengths if strength))[:4]
+
+
+def collect_weaknesses(question_evaluations: list[dict]) -> list[str]:
+    weaknesses = []
+    for item in question_evaluations:
+        if item.get("evaluationStatus", "graded") != "graded":
+            continue
+        weaknesses.extend(item.get("missing", []))
+        weaknesses.extend(item.get("incorrect", []))
+    return list(dict.fromkeys(weakness for weakness in weaknesses if weakness))[:4]
+
+
+def collect_review_files(question_evaluations: list[dict]) -> list[str]:
+    paths = []
+    for item in question_evaluations:
+        if item.get("evaluationStatus", "graded") != "graded":
+            continue
+        paths.extend(item.get("reviewCode", []))
+    return list(dict.fromkeys(path for path in paths if path))[:8]

@@ -11,6 +11,7 @@ import type {
   ProjectReport,
   QuizAnswer,
   QuizEvaluationResult,
+  QuestionEvaluation,
   QuestionLevel,
   QuestionType,
   RepoInfo,
@@ -236,7 +237,7 @@ Only create questions that can be answered from the selected snippets.
 Cover these angles once each: 변경 의도, 변경 영향도, 테스트/리스크, 리뷰형.
 The 리뷰형 question must ask about code review concerns such as responsibility boundaries, exception handling, regression risk, consistency with existing structure, or whether the implementation choice is appropriate.
 Ask about exception or failure handling only when the selected diff explicitly contains try/except/catch/throw/raise or an error response. Do not ask broad risks that require code outside the selected snippets.
-Ask about regression risk only when the selected diff includes a caller/consumer, tests, or explicit branch plus failure/return behavior.
+Ask about regression risk only when the selected diff includes a caller/consumer, related tests, or an explicit failure path. A normal branch and return are not enough.
 
 Repository: https://github.com/${context.commit.owner}/${context.commit.repo}
 Commit: ${context.commit.sha}
@@ -333,7 +334,7 @@ Only create questions that can be answered from the selected snippets.
 relatedFiles must match the paths of the selected evidence snippets.
 Never connect multiple files unless the selected snippets prove a direct call, shared endpoint, import/reference, or a complete intermediate-handler call chain.
 Do not reuse the same path and scope as the primary evidence for multiple questions.
-Do not ask about regression risk unless the snippets include a caller/consumer, tests, or explicit branch plus failure/return behavior.
+Do not ask about regression risk unless the snippets include a caller/consumer, related tests, or an explicit failure path. A normal branch and return are not enough.
 For prompt composition and URL validation questions, every condition and behavior needed for the answer must be visible before any omission marker.
 Do not use backticks. Do not quote code. Do not list examples.
 Each question must mention one concrete file path or symbol name from the code signals.
@@ -568,6 +569,7 @@ export async function evaluateAnswer(input: {
   const invalidReason = answerType === "question_challenge" ? invalidQuestionReason(question, input.answer) : null;
   if (invalidReason) return buildInvalidQuestionEvaluation(question, invalidReason);
   if (answerType === "insufficient") return buildInsufficientEvaluation(question, input.answer);
+  if (answerType === "question_challenge") return buildValidChallengeEvaluation(question);
 
   const fallback = buildFallbackEvaluation(input.answer, question.relatedFiles, question);
 
@@ -697,14 +699,45 @@ export async function evaluateCommitQuiz(input: {
 }
 
 // Keep stale backend deployments from overriding deterministic evidence decisions.
-export function requiresLocalQuizEvaluation(
+export function enforceDeterministicQuizGuards(
+  evaluation: QuizEvaluationResult,
   analysis: AnalysisResult | CommitAnalysisResult,
   answers: QuizAnswer[]
-): boolean {
-  return analysis.questions.some((question) => {
+): QuizEvaluationResult {
+  let changed = false;
+  const questionEvaluations = analysis.questions.map((question) => {
+    const current = evaluation.questionEvaluations.find((item) => item.questionId === question.id);
     const answer = answers.find((item) => item.questionId === question.id)?.answer.trim() ?? "";
-    return classifyAnswer(answer) === "question_challenge" && Boolean(invalidQuestionReason(question, answer));
-  });
+    const answerType = classifyAnswer(answer);
+    const invalidReason = answerType === "question_challenge" ? invalidQuestionReason(question, answer) : null;
+    if (invalidReason) {
+      changed = true;
+      return { questionId: question.id, ...buildInvalidQuestionEvaluation(question, invalidReason) };
+    }
+    if (answerType !== "question_challenge" || !current) return current;
+    changed = true;
+    return {
+      ...current,
+      score: Math.min(current.score, 20),
+      scoreReason: "문항 근거는 유효하지만 답변에서 요구한 코드 동작을 설명하지 않아 제한적으로 평가했습니다.",
+      understood: [],
+      missing: ["제공된 evidence의 조건, 호출, 반환 또는 실패 동작을 직접 설명해야 합니다."],
+      answerType: "question_challenge" as const,
+      evaluationStatus: "graded" as const,
+      invalidReason: ""
+    };
+  }).filter((item): item is QuestionEvaluation => Boolean(item));
+
+  if (!changed) return evaluation;
+  const graded = questionEvaluations.filter((item) => (item.evaluationStatus ?? "graded") === "graded");
+  return {
+    ...evaluation,
+    averageScore: graded.length ? clampScore(graded.reduce((sum, item) => sum + item.score, 0) / graded.length) : 0,
+    strengths: collectStrengths(questionEvaluations),
+    weaknesses: collectWeaknesses(questionEvaluations),
+    reviewFiles: collectReviewFiles(questionEvaluations),
+    questionEvaluations
+  };
 }
 
 function buildQuizEvaluationPrompt(input: {
@@ -788,11 +821,16 @@ async function evaluateQuizWithPrompt(
     const answerType = fallbackEvaluation.answerType || parsedEvaluation?.answerType || "substantive";
     if (fallbackEvaluation.evaluationStatus === "invalid_question") return fallbackEvaluation;
     const score = normalizeEvaluationScore(parsedEvaluation?.score, scoreDivisor);
+    const challengeScore = answerType === "question_challenge" ? Math.min(score, 20) : score;
     return ensureEvidenceGroundedFeedback({
       questionId: question.id,
-      score: answerType === "insufficient" ? Math.min(score, 10) : score,
-      scoreReason: answerType === "insufficient" ? "코드 이해 근거가 드러나지 않아 낮게 평가했습니다." : parsedEvaluation?.scoreReason || fallbackEvaluation.scoreReason,
-      understood: answerType === "insufficient" ? [] : normalizeStringArray(parsedEvaluation?.understood, fallbackEvaluation.understood),
+      score: answerType === "insufficient" ? Math.min(score, 10) : challengeScore,
+      scoreReason: answerType === "insufficient"
+        ? "코드 이해 근거가 드러나지 않아 낮게 평가했습니다."
+        : answerType === "question_challenge"
+          ? "문항 근거는 유효하지만 답변에서 요구한 코드 동작을 설명하지 않아 제한적으로 평가했습니다."
+          : parsedEvaluation?.scoreReason || fallbackEvaluation.scoreReason,
+      understood: answerType === "insufficient" || answerType === "question_challenge" ? [] : normalizeStringArray(parsedEvaluation?.understood, fallbackEvaluation.understood),
       missing: normalizeStringArray(parsedEvaluation?.missing, fallbackEvaluation.missing),
       incorrect: normalizeStringArray(parsedEvaluation?.incorrect, fallbackEvaluation.incorrect),
       relatedFiles: normalizeStringArray(parsedEvaluation?.relatedFiles, question.relatedFiles),
@@ -814,8 +852,8 @@ async function evaluateQuizWithPrompt(
       : 0,
     summary: parsed.summary || fallback.summary,
     strengths: collectStrengths(normalizedQuestionEvaluations) || normalizeStringArray(parsed.strengths, fallback.strengths),
-    weaknesses: normalizeStringArray(parsed.weaknesses, fallback.weaknesses),
-    reviewFiles: normalizeStringArray(parsed.reviewFiles, fallback.reviewFiles),
+    weaknesses: collectWeaknesses(normalizedQuestionEvaluations),
+    reviewFiles: collectReviewFiles(normalizedQuestionEvaluations),
     questionEvaluations: normalizedQuestionEvaluations
   };
 }
@@ -1469,10 +1507,10 @@ function buildCommitQuestionFromEvidence(
   index: number
 ): CommitQuestion {
   const selected = pickUnusedEvidence(evidenceSnippets, usedPaths, index);
-  const primaryPath = selected[0]?.path ?? fallbackQuestion.relatedFiles[0] ?? "변경 파일";
+  const primaryPath = selected[0] ? commitQuestionSubject(selected[0]) : fallbackQuestion.relatedFiles[0] ?? "변경 파일";
   return {
     ...question,
-    question: buildCommitQuestionText(question.type || fallbackQuestion.type, primaryPath),
+    question: buildCommitQuestionText(question.type || fallbackQuestion.type, primaryPath, selected),
     relatedFiles: selected.map((snippet) => snippet.path),
     evidenceSnippets: selected
   };
@@ -1559,11 +1597,25 @@ function evidenceScopeTitle(snippet: CodeEvidence): string {
   return snippet.title.trim();
 }
 
-function buildCommitQuestionText(type: CommitQuestionType, primaryPath: string): string {
+function buildCommitQuestionText(type: CommitQuestionType, primaryPath: string, evidenceSnippets: CodeEvidence[] = []): string {
   if (type === "변경 영향도") return `${primaryPath} 변경이 연결된 기능이나 모듈에 어떤 영향을 줄 수 있나요?`;
-  if (type === "테스트/리스크") return `${primaryPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`;
+  if (type === "테스트/리스크") {
+    const evidenceText = evidenceSnippets.map((snippet) => snippet.excerpt).join("\n");
+    return hasExplicitFailureEvidence(evidenceText)
+      ? `${primaryPath} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?`
+      : `${primaryPath}의 정상 분기와 반환 동작을 검증하려면 어떤 입력과 결과를 확인해야 하나요?`;
+  }
   if (type === "리뷰형") return `코드 리뷰에서 ${primaryPath} 변경의 구현 의도와 선택한 구현 방식을 어떻게 설명하겠습니까?`;
   return `${primaryPath} 변경은 어떤 문제를 해결하려는 의도인가요?`;
+}
+
+function commitQuestionSubject(snippet: CodeEvidence): string {
+  const scope = evidenceScopeTitle(snippet);
+  return scope ? `${snippet.path}의 ${scope}` : snippet.path;
+}
+
+function hasExplicitFailureEvidence(text: string): boolean {
+  return /\b(try|except|catch|throw|raise|HTTPException|HTTPError|URLError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d/i.test(text);
 }
 
 function normalizeQuestionRelatedFiles<T extends UnderstandingQuestion | CommitQuestion>(question: T): T {
@@ -1785,6 +1837,8 @@ function buildFallbackQuizEvaluation(analysis: AnalysisResult, answers: QuizAnsw
         ? buildInvalidQuestionEvaluation(question, invalidReason)
         : answerType === "insufficient"
           ? buildInsufficientEvaluation(question, answer)
+          : answerType === "question_challenge"
+            ? buildValidChallengeEvaluation(question)
           : buildFallbackEvaluation(answer, question.relatedFiles, question))
     };
   });
@@ -1813,6 +1867,8 @@ function buildFallbackCommitQuizEvaluation(analysis: CommitAnalysisResult, answe
         ? buildInvalidQuestionEvaluation(question, invalidReason)
         : answerType === "insufficient"
           ? buildInsufficientEvaluation(question, answer)
+          : answerType === "question_challenge"
+            ? buildValidChallengeEvaluation(question)
           : buildFallbackEvaluation(answer, questionRelatedPaths(question), question))
     };
   });
@@ -1858,7 +1914,7 @@ function questionCapabilityGap(question: UnderstandingQuestion | CommitQuestion,
   const evidenceText = (question.evidenceSnippets ?? []).map((snippet) => snippet.excerpt).join("\n");
   if (!evidenceText.trim()) return "문항에 답할 코드 본문이 없어 평가에서 제외했습니다.";
 
-  if (/예외\s*처리|오류\s*처리|실패.{0,8}(경로|처리|상황|경우|동작)/.test(question.question)
+  if (/예외\s*(처리|케이스)|오류\s*처리|실패.{0,8}(경로|처리|상황|경우|동작)/.test(question.question)
     && !/\b(try|except|catch|throw|raise|HTTPError|URLError|Exception|ValueError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d/i.test(evidenceText)) {
     return "문항이 예외 처리를 묻지만 제공된 evidence에 예외 또는 실패 처리 코드가 없어 평가에서 제외했습니다.";
   }
@@ -1914,10 +1970,8 @@ function hasTraceableRegressionEvidence(question: UnderstandingQuestion | Commit
   if (new Set(snippets.map(evidenceIdentity)).size > 1 && evidenceSnippetsConnected(snippets)) return true;
   const text = snippets.map((snippet) => snippet.excerpt).join("\n");
   const hasTest = /\b(test|spec|assert|expect|pytest|unittest)\b/i.test(text);
-  const hasBranch = /\b(if|elif|else|match|switch|case)\b/.test(text);
-  const hasFailure = /\b(try|except|catch|throw|raise|error|exception|fail)\b|status(?:_code)?\s*[=:]\s*[45]\d\d/i.test(text);
-  const hasReturn = /\breturn\b/.test(text);
-  return hasTest || (hasBranch && (hasFailure || hasReturn));
+  const hasFailure = /\b(try|except|catch|throw|raise|HTTPException|HTTPError|URLError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d/i.test(text);
+  return hasTest || hasFailure;
 }
 
 function isWeakEvidence(snippet: CodeEvidence): boolean {
@@ -1958,6 +2012,16 @@ function buildInvalidQuestionEvaluation(question: UnderstandingQuestion | Commit
     answerType: "question_challenge",
     invalidReason,
     evidenceReferences: questionEvidenceReferences(question)
+  };
+}
+
+function buildValidChallengeEvaluation(question: UnderstandingQuestion | CommitQuestion): EvaluationResult {
+  return {
+    ...buildInsufficientEvaluation(question, ""),
+    score: 10,
+    scoreReason: "문항 근거는 유효하지만 답변에서 요구한 코드 동작을 설명하지 않아 제한적으로 평가했습니다.",
+    missing: ["제공된 evidence의 조건, 호출, 반환 또는 실패 동작을 직접 설명해야 합니다."],
+    answerType: "question_challenge"
   };
 }
 
@@ -2016,10 +2080,26 @@ function ensureEvidenceGroundedFeedback<T extends EvaluationResult>(evaluation: 
 
 function collectStrengths(items: Array<EvaluationResult | (EvaluationResult & { questionId: string })>): string[] {
   return [...new Set(items
-    .filter((item) => (item.evaluationStatus ?? "graded") === "graded" && item.answerType !== "insufficient")
+    .filter((item) => (item.evaluationStatus ?? "graded") === "graded" && item.answerType === "substantive")
     .flatMap((item) => item.understood)
     .filter(Boolean))]
     .slice(0, 4);
+}
+
+function collectWeaknesses(items: Array<EvaluationResult | (EvaluationResult & { questionId: string })>): string[] {
+  return [...new Set(items
+    .filter((item) => (item.evaluationStatus ?? "graded") === "graded")
+    .flatMap((item) => [...item.missing, ...item.incorrect])
+    .filter(Boolean))]
+    .slice(0, 4);
+}
+
+function collectReviewFiles(items: Array<EvaluationResult | (EvaluationResult & { questionId: string })>): string[] {
+  return [...new Set(items
+    .filter((item) => (item.evaluationStatus ?? "graded") === "graded")
+    .flatMap((item) => item.reviewCode)
+    .filter(Boolean))]
+    .slice(0, 8);
 }
 
 function clampScore(score: unknown): number {

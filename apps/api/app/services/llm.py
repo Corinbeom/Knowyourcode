@@ -122,7 +122,7 @@ Only create questions that can be answered from the selected snippets.
 relatedFiles must match the paths of the selected evidence snippets.
 Never connect multiple files unless the selected snippets prove a direct call, shared endpoint, import/reference, or a complete intermediate-handler call chain.
 Do not reuse the same path and scope as the primary evidence for multiple questions.
-Do not ask about regression risk unless the snippets include a caller/consumer, tests, or explicit branch plus failure/return behavior.
+Do not ask about regression risk unless the snippets include a caller/consumer, related tests, or an explicit failure path. A normal branch and return are not enough.
 For prompt composition and URL validation questions, every condition and behavior needed for the answer must be visible before any omission marker.
 Each question type must be one of the selected 질문 유형 values only.
 Prefer runtime source files over test files. Use five different main files if possible.
@@ -193,7 +193,7 @@ Only create questions that can be answered from the selected snippets.
 Cover these angles once each: 변경 의도, 변경 영향도, 테스트/리스크, 리뷰형.
 The 리뷰형 question must ask about code review concerns such as responsibility boundaries, exception handling, regression risk, consistency with existing structure, or whether the implementation choice is appropriate.
 Ask about exception or failure handling only when the selected diff explicitly contains try/except/catch/throw/raise or an error response. Do not ask broad risks that require code outside the selected snippets.
-Ask about regression risk only when the selected diff includes a caller/consumer, tests, or explicit branch plus failure/return behavior.
+Ask about regression risk only when the selected diff includes a caller/consumer, related tests, or an explicit failure path. A normal branch and return are not enough.
 
 Repository: https://github.com/{context["commit"]["owner"]}/{context["commit"]["repo"]}
 Commit: {context["commit"]["sha"]}
@@ -851,25 +851,43 @@ def build_commit_question_from_evidence(question: dict, fallback_question: dict,
     if not selected:
         selected = compact_evidence(fallback_question.get("evidenceSnippets", []) or evidence_snippets[:1])
     related_files = evidence_paths(selected)
-    primary_path = related_files[0] if related_files else "변경 파일"
+    primary_path = commit_question_subject(selected[0]) if selected else "변경 파일"
 
     return {
         "id": question.get("id") or fallback_question.get("id") or f"q{index + 1}",
         "type": question_type,
-        "question": build_commit_question_text(question_type, primary_path),
+        "question": build_commit_question_text(question_type, primary_path, selected),
         "relatedFiles": related_files,
         "evidenceSnippets": selected,
     }
 
 
-def build_commit_question_text(question_type: str, primary_path: str) -> str:
+def build_commit_question_text(question_type: str, primary_path: str, evidence_snippets: list[dict] | None = None) -> str:
     if question_type == "변경 영향도":
         return f"{primary_path} 변경이 연결된 기능이나 모듈에 어떤 영향을 줄 수 있나요?"
     if question_type == "테스트/리스크":
-        return f"{primary_path} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?"
+        evidence_text = "\n".join(str(snippet.get("excerpt") or "") for snippet in (evidence_snippets or []))
+        if has_explicit_failure_evidence(evidence_text):
+            return f"{primary_path} 변경 후 어떤 테스트나 예외 케이스를 확인해야 하나요?"
+        return f"{primary_path}의 정상 분기와 반환 동작을 검증하려면 어떤 입력과 결과를 확인해야 하나요?"
     if question_type == "리뷰형":
         return f"코드 리뷰에서 {primary_path} 변경의 구현 의도와 선택한 구현 방식을 어떻게 설명하겠습니까?"
     return f"{primary_path} 변경은 어떤 문제를 해결하려는 의도인가요?"
+
+
+def commit_question_subject(snippet: dict) -> str:
+    path = str(snippet.get("path") or "변경 파일")
+    title = str(snippet.get("title") or "")
+    scope = title.split("·", 1)[1].strip() if "·" in title else ""
+    return f"{path}의 {scope}" if scope else path
+
+
+def has_explicit_failure_evidence(text: str) -> bool:
+    return bool(re.search(
+        r"\b(try|except|catch|throw|raise|HTTPException|HTTPError|URLError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d",
+        text,
+        re.I,
+    ))
 
 
 def build_repo_question_from_evidence(question: dict, fallback_question: dict, evidence_snippets: list[dict], index: int, used_paths: set[str] | None = None) -> dict:
@@ -1246,7 +1264,7 @@ def question_capability_gap(question: dict, answer: str = "") -> str | None:
     if not evidence_text.strip():
         return "문항에 답할 코드 본문이 없어 평가에서 제외했습니다."
 
-    if re.search(r"예외\s*처리|오류\s*처리|실패.{0,8}(경로|처리|상황|경우|동작)", question_text) and not re.search(
+    if re.search(r"예외\s*(처리|케이스)|오류\s*처리|실패.{0,8}(경로|처리|상황|경우|동작)", question_text) and not re.search(
         r"\b(try|except|catch|throw|raise|HTTPError|URLError|Exception|ValueError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d",
         evidence_text,
         re.I,
@@ -1301,10 +1319,12 @@ def has_traceable_regression_evidence(question: dict) -> bool:
         return True
     text = "\n".join(str(snippet.get("excerpt") or "") for snippet in snippets)
     has_test = bool(re.search(r"\b(test|spec|assert|expect|pytest|unittest)\b", text, re.I))
-    has_branch = bool(re.search(r"\b(if|elif|else|match|switch|case)\b", text))
-    has_failure = bool(re.search(r"\b(try|except|catch|throw|raise|error|exception|fail)\b|status(?:_code)?\s*[=:]\s*[45]\d\d", text, re.I))
-    has_return = bool(re.search(r"\breturn\b", text))
-    return has_test or (has_branch and (has_failure or has_return))
+    has_failure = bool(re.search(
+        r"\b(try|except|catch|throw|raise|HTTPException|HTTPError|URLError)\b|status(?:_code)?\s*[=:]\s*[45]\d\d",
+        text,
+        re.I,
+    ))
+    return has_test or has_failure
 
 
 def has_unlinked_constant_subject(question: dict) -> bool:
